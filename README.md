@@ -1,45 +1,31 @@
 # PaliGemma, sıfırdan
 
-Google DeepMind'ın görsel-dil modeli PaliGemma'nın mimarisini PyTorch ile sıfırdan yazıyorum: görüntü kodlayıcı (SigLIP), görüntüyü dil modeline bağlayan projeksiyon katmanı ve dil modeli (Gemma). Bu çalışma, sıfırdan GPT ve BPE tokenizer yazdığım [yz50](https://github.com/mlihgenel/yz50)'nin devamı. PaliGemma 2 makalesinin incelemesi ve Türkçe tabelalarla yaptığım deney [paper-to-practice](https://github.com/mlihgenel/paper-to-practice/tree/main/papers/01-paligemma2) reposunda.
+Google DeepMind'ın görsel-dil modeli PaliGemma'nın PyTorch ile sıfırdan yazılmış implementasyonu.
 
-**Yöntem:** Model eğitilmiyor. Mimariyi kendim yazıyorum, Google'ın yayımladığı ağırlıkları kendi modüllerime yüklüyorum ve her parçanın çıktısını Hugging Face `transformers` implementasyonuyla karşılaştırıyorum. Çıktılar aynıysa mimari doğru yazılmış demektir.
+PaliGemma üç parçadan oluşur. SigLIP görüntüyü küçük yamalara bölüp her yamayı bir görsel token'a çevirir. Tek bir linear katman bu token'ları dil modelinin boyutuna taşır. Gemma da görsel token'ları ve metin komutunu birlikte okuyup cevabı token token yazar. Kutular, maskeler ve OCR çıktıları dahil her şey metin olarak üretilir.
 
-**Sıra:** Önce PaliGemma 1 mimarisi (SigLIP + linear projeksiyon + Gemma). Ardından KV cache ve Gemma 2'ye özgü kısımlar (soft-capping, sliding window, sandwich norm) eklenerek PaliGemma 2. PaliGemma 2 makalesine göre iki model arasındaki tek mimari fark dil modeli.
+Model eğitilmiyor. Mimari sıfırdan yazılıyor, Google'ın yayımladığı ağırlıklar bu modüllere yükleniyor ve her parçanın çıktısı Hugging Face `transformers` implementasyonuyla karşılaştırılıyor.
 
-## İlerleme
+## Makale
 
-| # | Aşama | Durum |
-|---|---|---|
-| 1 | SigLIP: yama embedding'leri | ✅ |
-| 2 | SigLIP: attention, MLP, encoder (base → so400m) | 🔄 attention ✅ |
-| 3 | Processor + projeksiyon | ⬜ |
-| 4 | Gemma: RMSNorm, GeGLU, weight tying | ⬜ |
-| 5 | Gemma attention: GQA + RoPE | ⬜ |
-| 6 | Uçtan uca PaliGemma 1 (`paligemma-3b-pt-224`) | ⬜ |
-| 7 | KV cache | ⬜ |
-| 8 | Gemma 2 → PaliGemma 2 (`paligemma2-3b-mix-224`) | ⬜ |
+Steiner, A., Pinto, A. S., Tschannen, M., et al. *PaliGemma 2: A Family of Versatile VLMs for Transfer.* Google DeepMind, 2024. [arXiv:2412.03555](https://arxiv.org/abs/2412.03555)
 
-## Dosyalar
+Makale aynı tarifle eğitilmiş 9 modeli karşılaştırıyor: 3 dil modeli boyutu (3B, 10B, 28B) ve 3 çözünürlük (224, 448, 896 piksel). Mimari PaliGemma 1 ile aynı, değişen tek şey dil modeli (Gemma → Gemma 2).
 
-| Dosya | İçerik |
-|---|---|
-| `src/siglip.py` | SigLIP görüntü kodlayıcı: config, embeddings, attention, … |
-| `checks/check_embeddings.py` | Embeddings'i HF ile karşılaştırır |
-| `checks/check_encoder.py` | Attention, MLP, encoder katmanı, encoder ve modelin tamamını HF ile karşılaştırır. Henüz yazılmamış parçaları atlar |
+## Yazı
 
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python checks/check_encoder.py                                    # siglip-base-patch16-224
-.venv/bin/python checks/check_encoder.py google/siglip-so400m-patch14-224  # PaliGemma'nın kodlayıcısı
-```
+**[Göz mü, Beyin mi? Bir Görsel-Dil Modeline Nereden Yatırım Yapmalı?](https://medium.com/@mlihgenel/g%C3%B6z-m%C3%BC-beyin-mi-bir-g%C3%B6rsel-dil-modeline-nereden-yat%C4%B1r%C4%B1m-yapmal%C4%B1-342456927efa)** (Medium)
 
-## Kaynaklar
+Makaleyi okumamış bir okur için yazılmış eleştirel bir inceleme. Bir görsel-dil modelini iyileştirmek için daha keskin bir göz mü (yüksek çözünürlük), yoksa daha büyük bir beyin mi (büyük dil modeli) gerektiğini soruyor. Metin ve doküman okuyan görevler çözünürlükten, çok dilli ve akıl yürütme gerektiren görevler büyük modelden kazanıyor. Yazı, makalenin hangi iddiaları rakamla desteklediğini, hangilerini desteklemediğini de tartışıyor.
 
-- Tunga Bayrak, [Writing a Transformer Model from SCRATCH with PYTORCH](https://www.youtube.com/watch?v=r8y7gXIpb4A): SigLIP
-- Umar Jamil, [Coding a Multimodal (Vision) Language Model from scratch in PyTorch](https://www.youtube.com/watch?v=vAmKB7iPkWw) · [kod](https://github.com/hkproj/pytorch-paligemma): PaliGemma 1'in tamamı
-- Umar Jamil, [LLaMA explained](https://www.youtube.com/watch?v=Mn_9W1nCFLo): RMSNorm, RoPE, KV cache, GQA
-- Hugging Face `transformers`: [`siglip`](https://github.com/huggingface/transformers/tree/main/src/transformers/models/siglip), [`gemma`](https://github.com/huggingface/transformers/tree/main/src/transformers/models/gemma), [`gemma2`](https://github.com/huggingface/transformers/tree/main/src/transformers/models/gemma2), [`paligemma`](https://github.com/huggingface/transformers/tree/main/src/transformers/models/paligemma)
-- Makaleler: [ViT](https://arxiv.org/abs/2010.11929), [SigLIP](https://arxiv.org/abs/2303.15343), [RoFormer](https://arxiv.org/abs/2104.09864), [Gemma](https://arxiv.org/abs/2403.08295), [Gemma 2](https://arxiv.org/abs/2408.00118), [PaliGemma](https://arxiv.org/abs/2407.07726), [PaliGemma 2](https://arxiv.org/abs/2412.03555)
+## Deney
 
-Model ağırlıkları Google'a aittir ve [Gemma kullanım koşullarına](https://ai.google.dev/gemma/terms) tabidir. Ağırlıklar bu repoya dahil değildir, Hugging Face'ten indirilir.
+**[Türkçe tabelalar ve fişlerde 224 ile 448 piksel](https://github.com/mlihgenel/paper-to-practice/tree/main/papers/01-paligemma2/experiment)**
+
+Makalenin çözünürlük iddiasını yeni bir veri üzerinde sınayan, ücretsiz Colab GPU'sunda tekrarlanabilir bir deney. Aynı 3B model, Türkçe tabela ve fiş fotoğraflarında iki çözünürlükte karşılaştırıldı:
+
+- 224'ten 448'e geçince küçük yazıda doğruluk %13'ten %39'a, fişlerde toplam tutarda %46'dan %84'e çıkıyor. Bedeli soru başına yaklaşık 3,4 kat süre.
+- 224 piksel, okuyamadığı metni uyduruyor: Galata kitabesindeki "29 Mayıs 1453"ü "20 Mayıs 1938" diye okuyor.
+- Model Türkçe harfleri görüyor ama soru-cevapta siliyor: `ocr` modunda Türkçe harflerin %94'ünü doğru yazarken soru-cevapta "acil çıkış" yerine "acil cikis" yazıyor.
+
+Bu repo, aynı modelin içini anlamak için mimariyi sıfırdan kuruyor.
