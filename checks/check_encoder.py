@@ -1,4 +1,4 @@
-"""Aşama 2 doğrulaması: SigLIP encoder parçaları HF ile aynı çıktıyı veriyor mu?
+"""SigLIP encoder parçaları HF ile aynı çıktıyı veriyor mu?
 
 Parçalar küçükten büyüğe test edilir. src/siglip.py'de henüz yazılmamış sınıflar atlanır,
 yani her yeni sınıfı yazdıkça script'i yeniden çalıştırabilirsin:

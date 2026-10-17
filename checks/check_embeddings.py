@@ -1,4 +1,4 @@
-"""Aşama 1 doğrulaması: kendi SiglipVisionEmbeddings'imiz HF ile aynı çıktıyı veriyor mu?
+"""Kendi SiglipVisionEmbeddings'imiz HF ile aynı çıktıyı veriyor mu?
 
 Çalıştır (proje kökünden):
     .venv/bin/python checks/check_embeddings.py
@@ -64,7 +64,7 @@ def main():
         ok1 = compare("rastgele girdi", ours(x), hf_emb(x))
 
     # 4b) Gerçek görüntüyle karşılaştır. pixel_values HF image processor'dan geliyor
-    #     (kendi ön işlememizi aşama 3'te yazacağız).
+    #     (kendi ön işlememiz src/processing.py'da, check_processing.py ile test ediliyor).
     processor = AutoImageProcessor.from_pretrained(MODEL_ID)  # sadece görüntü tarafı, tokenizer gerekmez
     image = Image.open(IMAGE).convert("RGB")
     pixel_values = processor(images=image, return_tensors="pt").pixel_values

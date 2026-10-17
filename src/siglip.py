@@ -14,6 +14,7 @@ class SiglipVisionConfig:
     num_attention_heads: int = 12 
     layer_norm_eps: float = 1e-6 
     attention_dropout: float = 0.0 
+    projection_dim: int = 2048
     
 class SiglipVisionEmbeddings(nn.Module): 
     def __init__(self, config: SiglipVisionConfig):

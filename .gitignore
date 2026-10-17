@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .DS_Store
-# ağırlıklar ve önbellekler repoya girmez
+
 *.pt
 *.pth
 *.bin
@@ -11,7 +11,6 @@ __pycache__/
 hf_cache/
 checkpoints/
 
-# yerel çalışma belgeleri (repoya girmez)
 ROADMAP.md
 RESOURCES.md
 papers/
