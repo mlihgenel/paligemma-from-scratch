@@ -1,0 +1,10 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+
+# Üretilen veri ve videolar: export/ scriptleri ve manim/render.sh ile yeniden üretilir.
+# (pg_slices gated PaliGemma ağırlıklarından türetiliyor, görüntüler Wikimedia CC BY-SA)
+public/data/
+public/videos/
+manim/media/

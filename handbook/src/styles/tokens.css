@@ -1,0 +1,76 @@
+/* Tasarım tokenları. Eksen renkleri dataviz validatöründen geçti:
+   T (mavi), D (turuncu), V (aqua) her çiftte ayırt edilebilir; I, H, hd her zaman harf etiketiyle birlikte (ikincil kodlama). */
+:root {
+  --bg: #fbfaf7;
+  --bg-elev: #ffffff;
+  --bg-sunk: #f3f1ec;
+  --fg: #1b1b1f;
+  --fg-muted: #5c5a55;
+  --fg-faint: #9a968d;
+  --border: #e7e4dd;
+  --border-strong: #d3cfc5;
+  --accent: #3d4bd1;
+  --accent-soft: #eceefd;
+  --link: #3d4bd1;
+  --ok: #1f7a4d;
+  --ok-soft: #e4f2ea;
+  --bad: #c0392b;
+  --bad-soft: #fbe9e6;
+  --warn: #9a6400;
+  --warn-soft: #fbf1dc;
+  --info: #3d4bd1;
+  --info-soft: #eceefd;
+  --ax-B: #8d8a82;
+  --ax-T: #2a78d6;
+  --ax-D: #eb6834;
+  --ax-V: #1baf7a;
+  --ax-I: #6250d6;
+  --ax-H: #b8860b;
+  --ax-hd: #d4558a;
+  --ax-C: #8d8a82;
+  --ax-P: #2a78d6;
+  --code-bg: #f5f3ee;
+  --stage-bg: #f4f2ed;
+  --shadow: none;
+  --display: "Inter Tight", "Inter", system-ui, sans-serif;
+  --serif: "Literata", Georgia, serif;
+  --sans: "Inter", system-ui, -apple-system, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --radius: 6px;
+  --measure: 680px;
+  --wide: 1180px;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --bg: #151517;
+  --bg-elev: #1c1c1f;
+  --bg-sunk: #202024;
+  --fg: #ecebe8;
+  --fg-muted: #a9a7a1;
+  --fg-faint: #6f6d68;
+  --border: #2c2c30;
+  --border-strong: #3e3e43;
+  --accent: #8e98f5;
+  --accent-soft: #23264a;
+  --link: #9ea7f7;
+  --ok: #5cc28c;
+  --ok-soft: #17301f;
+  --bad: #ef7d70;
+  --bad-soft: #3a1c19;
+  --warn: #e3b450;
+  --warn-soft: #33290f;
+  --info: #8e98f5;
+  --info-soft: #23264a;
+  --ax-B: #9c998f;
+  --ax-T: #3987e5;
+  --ax-D: #d95926;
+  --ax-V: #199e70;
+  --ax-I: #9085e9;
+  --ax-H: #c98500;
+  --ax-hd: #d55181;
+  --ax-C: #9c998f;
+  --ax-P: #3987e5;
+  --code-bg: #1a1a1d;
+  --stage-bg: #1a1a1d;
+  color-scheme: dark;
+}
