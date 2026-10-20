@@ -3,7 +3,7 @@
 # Kullanım (proje kökünden): bash handbook/manim/render.sh [Sahne ...]
 set -e
 cd "$(dirname "$0")/../.."
-SCENES=${@:-"ResidualHighway ScaleRoundTrip RMSNormGeometry GeGLUGating WeightTying"}
+SCENES=${@:-"ResidualHighway ScaleRoundTrip RMSNormGeometry GeGLUGating WeightTying ConvAsPatchLinear FlattenTranspose MultiHeadReshape"}
 OUT=handbook/public/videos
 MEDIA=handbook/manim/media
 mkdir -p "$OUT"

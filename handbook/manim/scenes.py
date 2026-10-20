@@ -8,20 +8,22 @@ Render (proje kökünden):
 import numpy as np
 from manim import *
 
-BG = "#121110"
-C_T = "#6ea8ec"     # akış / token
-C_D = "#f0a050"     # gizli boyut
-C_I = "#b98ae6"     # MLP ara boyutu
-C_V = "#6cc28d"     # sözlük
-C_N = "#ec7fae"     # norm
-C_A = "#e3824f"     # vurgu
-C_F = "#7d776d"     # soluk
+# Kitabın açık tema tokenları (src/styles/tokens.css) ile aynı
+BG = "#f4f2ed"
+INK = "#1b1b1f"
+C_T = "#2a78d6"     # akış / token (eksen T)
+C_D = "#eb6834"     # gizli boyut (eksen D)
+C_I = "#6250d6"     # MLP ara boyutu (eksen I)
+C_V = "#1baf7a"     # sözlük (eksen V)
+C_N = "#d4558a"     # norm (eksen hd rengi)
+C_A = "#3d4bd1"     # vurgu (indigo)
+C_F = "#9a968d"     # soluk
 FONT = "Inter"
 
 config.background_color = BG
 
 
-def T(s, size=28, color=WHITE, **kw):
+def T(s, size=28, color=INK, **kw):
     return Text(s, font=FONT, font_size=size, color=color, **kw)
 
 
@@ -66,7 +68,7 @@ class ResidualHighway(Scene):
             norm_box = RoundedRectangle(width=1.2, height=0.7, corner_radius=0.12, color=C_N).move_to([x - 0.2, 1.7, 0])
             f_box = RoundedRectangle(width=1.2, height=0.7, corner_radius=0.12, color=C_D if "mlp" in name else C_F).move_to([x + 1.3, 1.7, 0])
             nl = T("norm", 20, C_N).move_to(norm_box)
-            fl = T(name, 20, WHITE).move_to(f_box)
+            fl = T(name, 20, INK).move_to(f_box)
             up = CurvedArrow(vec.get_top() + UP * 0.05, norm_box.get_bottom(), angle=-PI / 4, color=C_F, stroke_width=3)
             self.play(Create(norm_box), Create(f_box), FadeIn(nl), FadeIn(fl), Create(up), run_time=0.7)
 
@@ -228,7 +230,7 @@ class GeGLUGating(Scene):
         self.play(FadeIn(kl))
 
         # çarpım
-        times = MathTex(r"\odot", color=WHITE).scale(1.2).move_to([3.9, 0, 0])
+        times = MathTex(r"\odot", color=INK).scale(1.2).move_to([3.9, 0, 0])
         ub2 = ub.copy()
         self.play(ub2.animate.move_to([3.9, -1.6, 0]), FadeIn(times))
         p = a * u
@@ -290,4 +292,130 @@ class WeightTying(Scene):
         lgl = T("logits [257216]", 18, C_I).next_to(col, UP, buff=0.2)
         best = T("en benzer satır → en yüksek skor", 18, C_A).next_to(col, DOWN, buff=0.2)
         self.play(FadeIn(lgl), FadeIn(best))
+        self.wait(2)
+
+
+def grid_cell(color, size=0.5, opacity=0.9):
+    return Square(size, stroke_width=1.5, stroke_color=BG, fill_color=color, fill_opacity=opacity)
+
+
+class ConvAsPatchLinear(Scene):
+    """Conv2d(kernel = stride) = görüntüyü yamalara bölüp her yamaya aynı linear katmanı uygulamak"""
+    def construct(self):
+        title = T("Conv2d, kernel = stride: her yamaya aynı linear", 30).to_edge(UP, buff=0.4)
+        self.play(FadeIn(title))
+        rng = np.random.default_rng(2)
+        n, k = 6, 3
+        vals = rng.uniform(0.15, 0.95, size=(n, n))
+        img = VGroup(*[grid_cell(interpolate_color(ManimColor("#f4f2ed"), ManimColor(C_T), vals[r, c]), 0.55) for r in range(n) for c in range(n)])
+        img.arrange_in_grid(rows=n, cols=n, buff=0.02).shift(LEFT * 4 + DOWN * 0.2)
+        il = T("görüntü 6 × 6 (gerçekte 224 × 224 × 3)", 18, C_F).next_to(img, DOWN, buff=0.25)
+        self.play(FadeIn(img), FadeIn(il))
+        filt = rng.normal(size=k * k)
+        out = VGroup(*[grid_cell(C_F, 0.75, 0.15) for _ in range(4)]).arrange_in_grid(rows=2, cols=2, buff=0.06).shift(RIGHT * 4.6 + DOWN * 0.2)
+        ol = T("çıktı 2 × 2 (gerçekte 16 × 16)", 18, C_F).next_to(out, DOWN, buff=0.25)
+        self.play(FadeIn(out), FadeIn(ol))
+        wl = T("aynı filtre w (9 sayı)", 18, C_D).move_to([0.6, 2.4, 0])
+        wvec = VGroup(*[grid_cell(interpolate_color(ManimColor("#f4f2ed"), ManimColor(C_D), min(1, abs(v) / 2)), 0.3) for v in filt]).arrange(RIGHT, buff=0.02).next_to(wl, DOWN, buff=0.15)
+        self.play(FadeIn(wl), FadeIn(wvec))
+        for pi, (pr, pc) in enumerate([(0, 0), (0, 1), (1, 0), (1, 1)]):
+            idxs = [(pr * k + r) * n + (pc * k + c) for r in range(k) for c in range(k)]
+            box = SurroundingRectangle(VGroup(*[img[i] for i in idxs]), color=C_A, buff=0.03, stroke_width=4)
+            self.play(Create(box), run_time=0.4)
+            flat = VGroup(*[img[i].copy() for i in idxs])
+            self.play(flat.animate.arrange(RIGHT, buff=0.02).scale(0.55).next_to(wvec, DOWN, buff=0.35), run_time=0.7)
+            dot = MathTex(r"\cdot", color=INK).next_to(flat, RIGHT, buff=0.15)
+            v = float((vals.reshape(-1)[idxs] * filt).sum())
+            res = T(f"= {v:+.2f}", 20, C_A).next_to(dot, RIGHT, buff=0.12)
+            self.play(FadeIn(dot), FadeIn(res), run_time=0.4)
+            tgt = out[pi]
+            self.play(res.animate.move_to(tgt).scale(0.8), tgt.animate.set_fill(C_A, opacity=0.25), FadeOut(flat), FadeOut(dot), FadeOut(box), run_time=0.7)
+        foot = T("yamalar üst üste binmiyor · her yama: 588 sayı · w ile çarpım → 1 kanal (1152 filtre → 1152 kanal)", 19, C_A).to_edge(DOWN, buff=0.35)
+        self.play(FadeIn(foot))
+        self.wait(2)
+
+
+class FlattenTranspose(Scene):
+    """[C, H, W] → flatten(1) → [C, H·W] → transpose → [H·W, C], eleman takibiyle"""
+    def construct(self):
+        title = T("flatten(2) + transpose(1, 2): yamalar token'a dönüşüyor", 30).to_edge(UP, buff=0.4)
+        self.play(FadeIn(title))
+        C, H, W = 3, 2, 2
+        cols = [C_T, C_D, C_V]
+        cells = {}
+        maps = VGroup()
+        for c in range(C):
+            g = VGroup()
+            for r in range(H):
+                for w in range(W):
+                    sq = grid_cell(cols[c], 0.6)
+                    lab = T(f"{r * W + w}", 16, "#ffffff").move_to(sq)
+                    cell = VGroup(sq, lab)
+                    cells[(c, r, w)] = cell
+                    g.add(cell)
+            g.arrange_in_grid(rows=H, cols=W, buff=0.04)
+            maps.add(g)
+        maps.arrange(RIGHT, buff=0.6).shift(UP * 0.6)
+        l1 = T("[C, H, W] = [3, 2, 2] · her kanal bir harita, sayılar yama konumu", 19, C_F).next_to(maps, DOWN, buff=0.4)
+        self.play(FadeIn(maps), FadeIn(l1))
+        self.wait(0.6)
+        # flatten: her kanal bir satır
+        for c in range(C):
+            for r in range(H):
+                for w in range(W):
+                    pass
+        rows = []
+        anims = []
+        for c in range(C):
+            for p in range(H * W):
+                r, w = divmod(p, W)
+                tgt = np.array([-1.0 + p * 0.66, 1.0 - c * 0.66, 0])
+                anims.append(cells[(c, r, w)].animate.move_to(tgt))
+        l2 = T("flatten(2) → [C, H·W] = [3, 4] · satır = kanal", 19, C_F).move_to(l1)
+        self.play(*anims, Transform(l1, l2), run_time=1.6)
+        self.wait(0.6)
+        anims = []
+        for c in range(C):
+            for p in range(H * W):
+                r, w = divmod(p, W)
+                tgt = np.array([-0.66 + c * 0.66, 1.4 - p * 0.66, 0])
+                anims.append(cells[(c, r, w)].animate.move_to(tgt))
+        l3 = T("transpose(1, 2) → [H·W, C] = [4, 3] · satır = yama = token", 19, C_A).move_to(l1).shift(DOWN * 0.6)
+        self.play(*anims, Transform(l1, l3), run_time=1.6)
+        brace = Brace(VGroup(*[cells[(c, 0, 0)] for c in range(C)]), RIGHT, color=C_A)
+        bl = T("token 0 = yama 0'ın C sayısı", 18, C_A).next_to(brace, RIGHT)
+        self.play(GrowFromCenter(brace), FadeIn(bl))
+        self.wait(2)
+
+
+class MultiHeadReshape(Scene):
+    """[T, D] → view [T, H, hd] → transpose [H, T, hd]: her head kendi bloğunda"""
+    def construct(self):
+        title = T("Multi-head: view ve transpose", 30).to_edge(UP, buff=0.4)
+        self.play(FadeIn(title))
+        Tn, H, hd = 3, 2, 3
+        hc = [C_T, C_D]
+        cells = {}
+        for t in range(Tn):
+            for d in range(H * hd):
+                sq = grid_cell(hc[d // hd], 0.55)
+                lab = T(f"t{t}", 13, "#ffffff").move_to(sq)
+                cells[(t, d)] = VGroup(sq, lab).move_to([-1.5 + d * 0.6, 1.2 - t * 0.6, 0])
+        self.play(*[FadeIn(c) for c in cells.values()])
+        l = T("q_proj(x): [T, D] = [3, 6]", 20, C_F).move_to([0, -1.2, 0])
+        self.play(FadeIn(l))
+        self.wait(0.5)
+        # view: D'yi H × hd olarak ayır (araya boşluk)
+        anims = [c.animate.move_to([-1.8 + (d // hd) * 2.1 + (d % hd) * 0.6, 1.2 - t * 0.6, 0]) for (t, d), c in cells.items()]
+        l2 = T("view(B, T, H, hd): [3, 2, 3] · bellek aynı, sadece okunuş", 20, C_F).move_to(l)
+        self.play(*anims, Transform(l, l2), run_time=1.4)
+        self.wait(0.5)
+        # transpose: head'ler ayrı bloklara
+        anims = [c.animate.move_to([-3.2 + (d // hd) * 4.0 + (d % hd) * 0.6, 1.2 - t * 0.6, 0]) for (t, d), c in cells.items()]
+        l3 = T("transpose(1, 2): [H, T, hd] = [2, 3, 3] · her head kendi T × hd matrisi", 20, C_A).move_to(l)
+        self.play(*anims, Transform(l, l3), run_time=1.4)
+        h1 = T("head 0", 18, C_T).move_to([-2.6, 2.0, 0]); h2 = T("head 1", 18, C_D).move_to([1.4, 2.0, 0])
+        self.play(FadeIn(h1), FadeIn(h2))
+        foot = T("q @ kᵀ her head'de ayrı: [H, T, T] skor · sonra transpose ve reshape ile geri [T, D]", 19, C_A).to_edge(DOWN, buff=0.4)
+        self.play(FadeIn(foot))
         self.wait(2)
