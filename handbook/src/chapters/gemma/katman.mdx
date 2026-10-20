@@ -1,0 +1,84 @@
+import { Callout, Fig, Predict, S, Impact } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { BreakIt } from "../../components/misc";
+import { LayerFlow, SandwichCompare, NormSwapStats } from "./w/Layer";
+import { CodeLines } from "../../components/CodeLines";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { Link } from "react-router-dom";
+
+# GemmaDecoderLayer
+
+<p className="lead">Katmanın kendisi bir şey hesaplamıyor: dört alt modülü doğru sırayla çağırıp iki kez toplama yapıyor. İşin bütün inceliği sırada ve adlarda.</p>
+
+<CodeWalk file="gemma.py" symbol="GemmaDecoderLayer" notes={[
+  { match: "def __init__(self, config: GemmaConfig, layer_idx: int)", title: "layer_idx", text: <>Şu an kullanılmıyor. Aşama 7'de KV cache her katmanın K/V'sini bu numarayla saklayacak. Gemma 2'de (aşama 8) katmanın sliding window mu global mi olduğuna da bu karar verecek: çift/tek katmanlar.</> },
+  { match: "self.self_attn = nn.Identity()", title: "yer tutucu", text: <>Ad <code>self_attn</code> olmak zorunda: HF anahtarları <code>layers.N.self_attn.q_proj.weight</code>. <code>check_gemma.py</code> bu adı arıyor ve testte buraya bir stub koyuyor.</> },
+  { match: "self.mlp = GemmaMLP(config)", title: "mlp", text: <>Anahtarlar <code>layers.N.mlp.gate_proj.weight</code> vb.</> },
+  { match: "self.input_layernorm = GemmaRMSNorm", title: "attention girişindeki norm", text: <>Ad Llama'dan geliyor. Bloğun <b>girdisini</b> normalize ediyor.</> },
+  { match: "self.post_attention_layernorm = GemmaRMSNorm", title: "yanıltıcı ad", text: <>"Attention'dan sonra" geliyor ama attention'ın çıktısına değil, <b>akışa</b> uygulanıyor ve MLP'nin girişi oluyor. Aşağıdaki Gemma 2 karşılaştırmasına bak.</> },
+  { match: "def forward(self, hidden_states: torch.Tensor)", title: "forward imzası", text: <>Şimdilik tek argüman. Aşama 5'te <code>attention_mask</code> ve <code>position_ids</code> eklenecek: attention'ın token sırasını ve kimin kime bakabileceğini bilmesi gerekiyor. MLP ve norm'lar bunları kullanmıyor.</> },
+]} />
+
+## Satır satır akış
+
+Sağda forward'ın kodu, altında akış şeması. Kaydırdıkça aktif satır ilerliyor ve <code>hidden_states</code> değişkeninin <b>o an neyi tuttuğu</b> yazıyor. Aynı ad üç ayrı anlam taşıyor.
+
+<Scrolly label="GemmaDecoderLayer.forward" figure={(s) => (
+  <div>
+    <CodeLines file="gemma.py" symbol="GemmaDecoderLayer.forward" maxHeight={300} active={[["def forward"], ["residual = hidden_states::0"], ["self.input_layernorm(hidden_states)"], ["self.self_attn(hidden_states)"], ["hidden_states = residual + hidden_states::0"], ["residual = hidden_states::1"], ["self.post_attention_layernorm(hidden_states)"], ["self.mlp(hidden_states)"], ["hidden_states = residual + hidden_states::1"]][s]} />
+    <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "auto 1fr auto", gap: "6px 14px", fontSize: 14, alignItems: "baseline" }}>
+      <span className="mono" style={{ color: "var(--fg-muted)" }}>hidden_states</span>
+      <b>{["akışın kendisi", "akışın kendisi", "norm'lu kopya", "attn dalının çıktısı", "akış (güncellenmiş)", "akışın kendisi", "norm'lu kopya", "mlp dalının çıktısı", "akış (güncellenmiş)"][s]}</b>
+      <S s="B, T, 2048" ax="B,T,D" />
+      <span className="mono" style={{ color: "var(--fg-muted)" }}>residual</span>
+      <b>{s === 0 ? "—" : s <= 4 ? "akışın girişteki hali" : "akışın attn sonrası hali"}</b>
+      <S s="B, T, 2048" ax="B,T,D" />
+    </div>
+  </div>
+)}>
+<Step>Katman <S s="B, T, D" /> alıyor ve aynı şekli döndürüyor. Şimdilik tek argüman var. Aşama 5'te `attention_mask` ve `position_ids` eklenecek.</Step>
+<Step>`residual = hidden_states`: akışın bir kopyası **norm'dan önce** kenara konuyor. Python'da bu bir kopya değil, aynı tensöre ikinci bir ad. Sonraki satırlar yeni tensörler ürettiği için sorun olmuyor.</Step>
+<Step>`input_layernorm`: artık `hidden_states` akışın kendisi değil, **normalize edilmiş bir kopya**. Akış `residual`'da bekliyor.</Step>
+<Step>`self_attn`: dalın hesabı. Şu an `Identity`, yani kopya aynen geçiyor ve bu blok `h + norm(h)` hesaplıyor. Aşama 5'te token'lar burada birbirini görecek.</Step>
+<Step>`residual + hidden_states`: dal çıktısı akışa **toplanıyor**. `hidden_states` yeniden akışın kendisi oldu, ama güncellenmiş haliyle.</Step>
+<Step>MLP bloğu için aynı desen: önce akış yeniden `residual`'a.</Step>
+<Step>`post_attention_layernorm`: adına rağmen MLP'nin **girişindeki** norm.</Step>
+<Step>`mlp`: GeGLU. Token'lar arası karışma yok (<Link to="/gemma/geglu">5.4</Link>).</Step>
+<Step>İkinci toplama. Çıkış girişle aynı şekilde, bir sonraki katmana hazır.</Step>
+</Scrolly>
+
+<Predict q="hidden_states değişkeni forward boyunca kaç farklı 'anlamda' kullanılıyor?">
+Üç anlamda: (1) akışın kendisi (girişte ve her ⊕'dan sonra), (2) akışın norm'lu kopyası, (3) dalın çıktısı (attn ya da mlp). Python'da hepsi aynı ad. Okurken "şu an bu değişken neyi tutuyor?" diye sormak hataları yakalamanın en iyi yolu. HF de, Umar da bu stili kullanıyor. Ağırlıklar adla değil sırayla eşleştiği için ad değiştirmenin zararı yok.
+</Predict>
+
+## Norm'ları karıştırmak
+
+İki norm aynı sınıftan, aynı şekilde. Yerlerini değiştirmek kodda tek kelimelik bir hata. Sıfır başlatılmış ağırlıklarla iki norm **birebir aynı** davrandığı için hata görünmez.
+
+<BreakIt title="input_layernorm ile post_attention_layernorm'u yer değiştir"
+  good={`hidden_states = self.input_layernorm(hidden_states)          # ← attn girişi
+...
+hidden_states = self.post_attention_layernorm(hidden_states)  # ← mlp girişi`}
+  bad={`hidden_states = self.post_attention_layernorm(hidden_states)  # ← yanlış
+...
+hidden_states = self.input_layernorm(hidden_states)          # ← yanlış`}
+  result={(b) => b ? <NormSwapStats broken={b} /> : <p className="small muted" style={{margin: 0}}>Anahtarı aç: farkı iki durumda ölç.</p>} />
+
+<code>check_gemma.py</code>'deki şu satırın nedeni bu:
+
+```python
+# Norm ağırlıklarını rastgele yap. Sıfır kalırsa iki norm aynı davranır ve
+# input_layernorm ile post_attention_layernorm'u karıştıran bir kod da testi geçer
+hf.input_layernorm.weight.normal_()
+hf.post_attention_layernorm.weight.normal_()
+```
+
+## Gemma 2'de ne değişecek?
+
+<Fig caption={<><b>Aynı ad, farklı yer.</b> Gemma 2'ye geçince ilk kontrol edeceğin şey her norm'un nereye uygulandığı.</>}>
+<SandwichCompare />
+</Fig>
+
+<Impact from="gemma.py: GemmaDecoderLayer" to="aşama 5: forward(hidden_states, attention_mask, position_ids)">
+Attention gelince <code>forward</code> imzası değişecek ve <code>GemmaModel.forward</code>'daki döngü bu argümanları her katmana geçirecek. <Link to="/gemma/model">5.6</Link>'da neden <code>nn.Sequential</code> değil <code>nn.ModuleList</code> kullandığımızın nedeni bu.
+</Impact>

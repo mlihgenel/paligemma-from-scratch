@@ -1,0 +1,149 @@
+import { Callout, Fig, Predict, S, Impact, Note } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { BreakIt, ManimVideo } from "../../components/misc";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { RealNormWeights, OrderStats, ZeroInitStats } from "./w/Rms";
+import { RmsSequence, RmsPlayground, NormPlane, Keepdim3DScene } from "./w/Rms2";
+import { Link } from "react-router-dom";
+
+# RMSNorm
+
+<p className="lead">Dört satırlık bir sınıf, ama içinde dört ayrı karar var: ortalamayı çıkarmamak, <code>(1 + w)</code> ile ölçeklemek, hesabı float32'de yapmak ve çarpımı dtype dönüşümünden önce yapmak. Önce gerçek bir token dizisi üzerinde adım adım izleyelim.</p>
+
+$$
+\mathrm{RMSNorm}(x) = \frac{x}{\sqrt{\frac{1}{d}\sum_{i=1}^{d} x_i^2 + \varepsilon}} \odot (1 + w)
+$$
+
+<Note label="Kaynak">Zhang ve Sennrich, <i>Root Mean Square Layer Normalization</i>, NeurIPS 2019. Llama, Gemma, Mistral ve T5'in hepsi bunu kullanıyor.</Note>
+
+Payda vektörün **RMS**'i (root mean square), yani karelerinin ortalamasının karekökü. Her token kendi vektörüyle, ötekilerden bağımsız normalize ediliyor.
+
+## Adım adım: dört gerçek token
+
+Aşağıdaki sayılar uydurma değil. PaliGemma'nın embedding tablosundan `<bos>`, `caption`, `␣tr` ve `\n` token'larının satırları alındı, √2048 ile çarpıldı (Gemma'nın akışa giriş ölçeği) ve ilk 8 boyutu gösteriliyor. `w` gerçek modelin ilk katmanındaki `input_layernorm` ağırlığı. Aşağı kaydır.
+
+<Scrolly label="RMSNorm, gerçek değerlerle" figure={(s) => <RmsSequence step={s} />}>
+<Step>
+**Girdi.** Her satır bir token, her sütun gizli boyutun bir elemanı: <S s="T, D" />. Renk değerin işaretini ve büyüklüğünü gösteriyor. Sağdaki rms değerlerine bak: satırların büyüklüğü 2–3 kat farklı.
+</Step>
+<Step>
+**`x.pow(2)`**: eleman eleman kare. Şekil aynı. İşaretler kayboluyor, büyük değerler daha da baskın hale geliyor. Bu adım float32'de yapılıyor: bf16'nın 7 bitlik mantisiyle 2048 karenin toplamı ciddi hassasiyet kaybeder.
+</Step>
+<Step>
+**`.mean(-1, keepdim=True)`**: her satırın 8 karesi tek bir sayıda toplanıyor. Hücrelerin sağdaki sütuna aktığına dikkat et. Sonuç <S s="T, 1" />: `keepdim=True` son ekseni silmek yerine **1** olarak tutuyor. Bu küçük ayrıntı bir sonraki adımda işe yarıyor.
+</Step>
+<Step>
+**`torch.rsqrt(… + eps)`**: 1/√(ortalama + 1e-6). Büyük satırların rsqrt'ı küçük, küçük satırlarınki büyük: her token kendi büyüklüğüyle orantılı bir katsayı alıyor.
+</Step>
+<Step>
+**Broadcast.** <S s="T, 1" /> ile <S s="T, D" /> çarpılacak. PyTorch 1 olan ekseni D boyunca **yayıyor**: her satırın rsqrt'ı o satırın 8 hücresine kopyalanmış gibi davranıyor. Bellekte kopya oluşmuyor, bu sadece bir görünüm.
+</Step>
+<Step>
+**`x * rsqrt`**: artık her satırın RMS'i tam **1.00**. Sağdaki değerlere bak. Satırlar arasındaki büyüklük farkı tamamen silindi, yönler (işaret ve oranlar) korundu.
+</Step>
+<Step>
+**`× (1 + w)`**: son olarak her boyut kendi öğrenilmiş katsayısıyla çarpılıyor. Pembe satır gerçek ağırlıklar. Bu kez yayılan şey <S s="D" />: aynı katsayı bütün token'lara uygulanıyor. Gemma'da bu çarpım hâlâ float32'de, dtype'a dönüş en sonda.
+</Step>
+</Scrolly>
+
+## Kendin dene
+
+<Fig wide caption={<><b>RMSNorm laboratuvarı.</b> Soldaki x hücrelerini ve üstteki pembe (1 + w) hücrelerini yukarı-aşağı sürükleyerek değiştir. Sağdaki çıktı canlı hesaplanıyor (<code>lib/tensor.ts</code>, PyTorch'la bit bit doğrulandı). Herhangi bir hücrenin üstüne gelince hesabı görünür.</>}>
+<RmsPlayground />
+</Fig>
+
+<Predict q="x'i 10 ile çarparsan çıktı ne olur? Bir satırın bütün elemanları eşitse (ör. hepsi 5)?">
+Çıktı **hiç değişmez**: <span className="mono">(10x) / rms(10x) = x / rms(x)</span>. Laboratuvarda "x × 10" ile görebilirsin. Sadece rsqrt sütunu 10 kat küçülüyor. Bütün elemanlar 5 ise rms = 5 ve çıktı her boyutta 1·(1+w). LayerNorm'da aynı satır ortalama çıkarılınca **sıfır** olurdu.
+</Predict>
+
+## Kodda nerede?
+
+<CodeWalk file="gemma.py" symbol="GemmaRMSNorm" notes={[
+  { match: "self.eps = eps", title: "eps = 1e-6", text: <>Sıfıra bölmeyi önlüyor. Config'teki <code>rms_norm_eps</code>. PyTorch'un LayerNorm varsayılanı 1e-5. Bu fark <code>allclose</code>'u bozar.</> },
+  { match: "self.weight = nn.Parameter(torch.zeros(dim))", title: "Sıfırdan başlıyor", text: <>Ölçek <code>1 + weight</code> olduğu için başlangıçta ölçek tam 1. Llama <code>torch.ones</code> ile başlatıp <code>x * weight</code> kullanıyor. Matematiksel olarak aynı, ama checkpoint'teki sayılar 1 kadar kaymış. Gemma ağırlığını Llama koduyla yüklemek her şeyi bozar.</> },
+  { match: "return x * torch.rsqrt", title: "_norm", text: <>Scrolly'deki 2–6. adımlar tek satırda: kare, ortalama (keepdim), rsqrt, broadcast çarpım.</> },
+  { match: "output = self._norm(x.float())", title: "float32'ye yükselt", text: <>Model bf16'da çalışsa bile kare ve ortalama float32'de.</> },
+  { match: "output = output * (1.0 + self.weight.float())", title: "(1+w), hâlâ float32", text: <>Bu satırın <code>type_as</code>'tan <b>önce</b> gelmesi Gemma'yı Llama'dan ayırıyor. Aşağıdaki "işlem sırası" bölümüne bak.</> },
+  { match: "return output.type_as(x)", title: "Girdinin dtype'ına dön", text: <>Tek bir yuvarlama, en sonda. Çıktı <S s="B, T, D" />.</> },
+]} />
+
+## Geometri: çember
+
+d = 2 olsaydı RMSNorm'un yaptığını düzlemde görebilirdik. Her nokta yönünü koruyor, büyüklüğünü kaybediyor: hepsi √d yarıçaplı bir çembere taşınıyor.
+
+<Fig wide caption={<><b>RMSNorm, (1+w) ve LayerNorm, iki boyutta.</b> x noktasını sürükle. Gri noktalar rastgele vektörler, renkli noktalar onların görüntüsü. Gerçekte d = 2048: "çember" 2048 boyutlu bir küre, yarıçapı √2048 ≈ 45.25.</>}>
+<NormPlane />
+</Fig>
+
+<Callout kind="neden" title="Ortalamayı çıkarmamak neden sorun değil?">
+LayerNorm iki şey yapar: merkezleme (ortalamayı sıfırlama) ve ölçekleme. Zhang ve Sennrich eğitimi kararlı tutanın büyük ölçüde ölçekleme olduğunu gösterdi. Merkezleme olmadan kalite neredeyse aynı, hesap daha ucuz: bir ortalama ve bir çıkarma daha az, bias yok. Ayrıca LayerNorm "bütün boyutların ortak kayması" bilgisini siliyor, RMSNorm koruyor. Düzlemde LayerNorm'a geçince bunu görebilirsin: geriye sadece iki nokta kalıyor.
+</Callout>
+
+## Üç eksenle: keepdim ve broadcast
+
+Gerçek tensörün bir de batch ekseni var: <S s="B, T, D" />. `mean(-1)` hep son ekseni, yani D'yi topluyor.
+
+<Scrolly label="[B, T, D] üzerinde mean ve broadcast" figure={(s) => <Keepdim3DScene step={s} />}>
+<Step>
+**<S s="B, T, D" />**: 2 örnek × 3 token × 6 boyut. Her küp bir sayı. Üstüne gelince değerini görürsün. Sahneyi döndürebilirsin, sağ üstteki düğme görünümü sıfırlar.
+</Step>
+<Step>
+**`mean(-1, keepdim=True)`**: her (b, t) satırının 6 küpü sağdaki tek bir küpe akıyor. Sonuç <S s="B, T, 1" />. D ekseni silinmedi, boyu 1'e indi.
+</Step>
+<Step>
+**Broadcast**: o tek küp D boyunca yayılıyor ve her elemanın önüne geliyor. Böylece <S s="B, T, 1" /> × <S s="B, T, D" /> çarpımı mümkün oluyor.
+</Step>
+</Scrolly>
+
+<Note label="Kural">PyTorch eksenleri <b>sağdan</b> eşler. Boyu 1 olan eksen karşı tarafın boyuna yayılır.</Note>
+
+<Predict q="keepdim=True olmasaydı mean(-1)'in şekli ne olurdu ve x * rsqrt(...) çalışır mıydı?">
+Şekil <S s="B, T" /> olurdu. Sağdan eşleştirmede T ile D karşılaşır. T ≠ D ise hata alırsın. T == D ise (ör. ikisi de 64) **sessizce yanlış** çalışır: her token başka bir token'ın RMS'iyle bölünür. Bu tür hataları HF karşılaştırması yakalıyor.
+</Predict>
+
+## Gerçek ağırlıklar: model hangi boyutları büyütüyor?
+
+<Fig wide caption={<><b>Gerçek PaliGemma'nın 37 RMSNorm'u.</b> Isı haritasında her satır bir katman, her sütun bir boyut, renk 1+w. Satıra tıkla. Ölçekler 1 civarında değil: ortalama ~2. Bazı boyutlarda 1+w negatif, yani norm o boyutun <b>işaretini çeviriyor</b>.</>}>
+<RealNormWeights />
+</Fig>
+
+<Note label="Gerçek ağırlıklardan">Bazı boyutlarda 1+w ≈ 10–14. Bu, transformer'larda bilinen "aşırı büyük aktivasyon boyutları" (massive activations) olgusuyla uyumlu.</Note>
+
+Sıfırdan başlayan ağırlıklar eğitimde epey büyümüş: ortalama `input_layernorm`'da ≈ 1.1, `post_attention_layernorm`'da ≈ 1.6, yani tipik ölçek 2–2.6.
+
+## Sıfır başlatmanın tuzağı
+
+Ağırlıklar sıfırken `(1 + w)` = 1. Bu durumda ağırlığı hiç kullanmayan hatalı bir kod da aynı sonucu verir.
+
+<BreakIt title="(1 + w) çarpımını unut"
+  good={`output = self._norm(x.float())
+output = output * (1.0 + self.weight.float())   # ← ölçek
+return output.type_as(x)`}
+  bad={`output = self._norm(x.float())
+# ölçek unutuldu                                  # ← w hiç kullanılmıyor
+return output.type_as(x)`}
+  result={(b) => <ZeroInitStats broken={b} />} />
+
+Bu yüzden `check_gemma.py` karşılaştırmadan önce `hf.weight.normal_()` ile ağırlığı rastgele dolduruyor. Kural: **bir test, bir parametrenin kullanıldığını ancak o parametre etkisiz değerde değilse kanıtlar.**
+
+## İşlem sırası: Gemma ve Llama
+
+İki kod da aynı formülü hesaplıyor, tek fark bf16'ya ne zaman dönüldüğü:
+
+| | Gemma (senin kodun) | Llama |
+|---|---|---|
+| 1 | `x.float()` → normalize | `x.float()` → normalize |
+| 2 | `× (1 + w)` **float32'de** | **bf16'ya dön** |
+| 3 | bf16'ya dön | `× w` **bf16'da** |
+
+Gemma tek yuvarlama yapıyor, Llama iki. Yukarıdaki laboratuvarda **bfloat16** ve **Llama sırası**'nı seç: halkalı hücreler iki sıranın farklı sonuç verdiği yerler. Oyuncak modelde ölçülen fark: <OrderStats />.
+
+<Callout kind="dikkat">
+Bu fark float32'de tamamen kayboluyor, sadece bf16'da görülüyor ve 18 katman × 2 norm boyunca birikiyor. <code>check_gemma.py</code>'deki bf16 testi <code>exact=True</code> (bit bit eşitlik) kullanıyor, çünkü 1 ulp'lik fark <code>allclose</code>'un toleransına girerdi.
+</Callout>
+
+<Impact from="gemma.py: GemmaRMSNorm" to="Gemma 2 (aşama 8): katman başına 4 norm">
+Aynı sınıf Gemma 2'de katman başına 4 kez kullanılacak (sandwich norm). <code>(1 + w)</code> ve float32 sırası aynen kalıyor.
+</Impact>
+
+<ManimVideo scene="RMSNormGeometry" caption="noktalar çembere, sonra elipse (40 sn)" />

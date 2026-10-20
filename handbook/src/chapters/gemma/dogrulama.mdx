@@ -1,0 +1,80 @@
+import { Callout, Fig, Predict, S } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { KeyMatcher, CheckOutput, AllChecks, CheckFlow } from "./w/Verify";
+import { CodeLines } from "../../components/CodeLines";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { Link } from "react-router-dom";
+
+# Doğrulama nasıl çalışıyor
+
+<p className="lead">Kodun doğru mu? "Çalışıyor" yetmez: yanlış bir model de doğru şekilde tensörler üretir. Tek güvenilir ölçüt aynı ağırlık ve aynı girdiyle HF'nin verdiği <b>aynı sayılar</b>. <code>check_gemma.py</code> bunu küçük bir config ve hiç indirme yapmadan sağlıyor.</p>
+
+## Son çalıştırma
+
+<Fig wide caption={<><b>Kitap hazırlanırken senin kodunla çalıştırıldı.</b> Bütün farklar <b>tam sıfır</b>. Aynı işlemler aynı sırada yapıldığında float sonuçlar bit bit aynı çıkıyor. bf16 testi de birebir.</>}>
+<CheckOutput />
+<div style={{ marginTop: 12 }}><AllChecks /></div>
+</Fig>
+
+## Bir testin yedi adımı
+
+Her check aynı tarifi izliyor. Örnek: `check_decoder_layer`. Kaydırdıkça aktif adım ve ilgili satırlar vurgulanıyor.
+
+<Scrolly label="check_decoder_layer, adım adım" figure={(s) => (
+  <div>
+    <CheckFlow at={s} />
+    <div style={{ marginTop: 16 }}>
+      <CodeLines file="check_gemma.py" symbol="check_decoder_layer" maxHeight={300} active={[
+        ["HFGemmaDecoderLayer(hf_config"],
+        ["hf.input_layernorm.weight.normal_()", "hf.post_attention_layernorm.weight.normal_()"],
+        ["hf.self_attn = StubAttention", "ours.self_attn = StubAttention"],
+        ["if not copy_weights("],
+        ["if not copy_weights("],
+        ["x = torch.randn(B, T, SMALL"],
+        ["return compare("],
+      ][s]} />
+    </div>
+  </div>
+)}>
+<Step>**HF modülünü kur.** Küçük bir config (hidden 64, 2 katman) ve rastgele ağırlıklarla, hiçbir şey indirmeden. Aynı config'le senin `GemmaDecoderLayer`'ın da kuruluyor.</Step>
+<Step>**Rastgeleleştir.** Norm ağırlıkları sıfırken iki norm birebir aynı davranır ve onları karıştıran bir kod da testi geçer. `.normal_()` bu kör noktayı kapatıyor (<Link to="/gemma/katman">5.5</Link>).</Step>
+<Step>**Stub koy.** Attention henüz yok. İki tarafa da aynı rastgele Linear konuyor, böylece test sadece katmanın **iskeletini** sınıyor.</Step>
+<Step>**Anahtarları karşılaştır.** `copy_weights` önce iki `state_dict`'in anahtar kümelerini karşılaştırıyor. Bir ad yanlışsa hangisinin fazla, hangisinin eksik olduğu yazdırılıyor.</Step>
+<Step>**Ağırlıkları kopyala.** `load_state_dict(hf.state_dict())`: artık iki modülün parametreleri birebir aynı.</Step>
+<Step>**Aynı girdi.** `torch.randn(...) * 40`: gerçek akış ~45 ölçeğinde olduğu için girdi de büyük. Küçük girdide eps'in etkisi ve bf16 yuvarlama sınırları farklı olurdu.</Step>
+<Step>**Karşılaştır.** Şekil, dtype ve `allclose` (bf16 RMSNorm'da `torch.equal`). Senin sonuçların **tam sıfır** fark veriyor.</Step>
+</Scrolly>
+
+## Neden stub attention?
+
+<CodeWalk file="check_gemma.py" symbol="StubAttention" notes={[
+  { match: "self.proj = nn.Linear(hidden_size, hidden_size, bias=False)", title: "rastgele ama aynı", text: <>Attention henüz yok. Senin <code>Identity</code>'ni HF'nin gerçek attention'ıyla karşılaştırmak anlamsız olurdu. Testin konusu katmanın <b>iskeleti</b>, attention değil. İki tarafa da aynı (kopyalanan) rastgele Linear konuyor, yani attention "bilinen bir fonksiyon" oluyor.</> },
+  { match: "return (out, None) if self.hf_style else out", title: "HF tuple döndürüyor", text: <>HF attention <code>(çıktı, attention ağırlıkları)</code> ikilisi döndürüyor ve HF katmanı <code>[0]</code> ile açıyor. Seninki tek tensör döndürüyor. Stub iki arayüzü de taklit ediyor.</> },
+]} />
+
+## Testin kendisinin tuzakları
+
+| Önlem | Olmasaydı yakalanmayacak hata |
+|---|---|
+| `hf.weight.normal_()` (RMSNorm) | `(1 + w)` yerine hiç ölçek yok, ya da `x * w` (5.3) |
+| `randomize_norms` | `input_layernorm` ile `post_attention_layernorm` karışık (5.5) |
+| `torch.randn(...) * 40` | Gerçek akış ~45 ölçeğinde. Küçük girdide eps'in etkisi farklı, bf16 yuvarlama sınırları farklı |
+| `exact=True` (bf16) | Llama sırası: float32'de çarpmadan önce bf16'ya dönmek (5.3) |
+| `scaled_embeds` | HF 5.x √d'yi tablonun içinde uyguluyor: HF'ye ölçeklenmiş, sana ham embedding veriliyor (5.2) |
+| `tied = ... is ...` | Tying'i <code>.clone()</code> ile yapmak: değerler aynı, nesneler farklı (5.7) |
+
+<Callout kind="ozet" title="Genel kural">
+Bir test bir parametrenin kullanıldığını ancak o parametre <b>etkisiz değerde değilse</b> kanıtlayabilir. 0, 1, birim matris ve eşit değerler şüphelidir. Rastgele doldur, sonra karşılaştır.
+</Callout>
+
+## Gerçek checkpoint ile anahtar eşleşmesi
+
+Testler küçük config'le çalışıyor. Asıl hedef gerçek ağırlıkları yüklemek. Senin modelinin <b>gerçek boyutlu</b> <code>state_dict</code> anahtarları ile PaliGemma checkpoint'inin anahtarları:
+
+<Fig wide caption={<><b>Anahtar eşleştirici.</b> Şu an: 72 attention anahtarı (18 katman × q/k/v/o) checkpoint'te var, sende yok. lm_head sende var, checkpoint'te yok. Başka fark yok. Bir modülü yeniden adlandırmayı dene: tek bir ad değişikliği yüzlerce anahtarı kırıyor.</>}>
+<KeyMatcher />
+</Fig>
+
+<Predict q="'mlp → feed_forward' yeniden adlandırması kaç anahtarı kırar?">
+Her katmanda 3 Linear (gate/up/down) × 18 katman = <b>54</b> anahtar sende "fazla", checkpoint'te aynı 54'ü "eksik". Ağırlık yüklemenin bütünüyle <b>adlara</b> dayandığını görmenin en kısa yolu bu. HF'nin adlarını aynen kullanmamızın nedeni de bu.
+</Predict>

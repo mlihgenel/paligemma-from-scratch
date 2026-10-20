@@ -1,0 +1,61 @@
+import { Callout, Fig, S, Predict } from "../../components/ui";
+import { ShapeJourney } from "./w/Shapes";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { ModuleTreeView, ParamShare } from "./w/Tree";
+import { Link } from "react-router-dom";
+
+# Gemma haritası
+
+<p className="lead">Aşama 4'te Gemma'nın attention dışındaki her şeyini yazdın. Ayrıntıya girmeden önce bütün parçaların nerede durduğuna ve modelin ağırlığının nerede toplandığına bakalım.</p>
+
+Gemma'nın işi tek cümleyle şu: <S s="B, T" /> token id'lerini alıp <S s="B, T, V" /> logit'lere çevirmek. Arada her token bir <S s="D" /> vektörü olarak 18 katman boyunca taşınıyor. PaliGemma'da girişteki token'ların 256'sı görüntüden geliyor.
+
+## Modül ağacı
+
+Aşağıdaki ağaç, senin `gemma.py` ve `paligemma.py` sınıflarının **gerçek config** ile kurulmuş hali. Giriş/çıkış şekilleri gerçek bir forward sırasında yakalandı (260 token: 256 görüntü + `<bos>` + "caption tr" + `\n`). Bir düğüme tıkla.
+
+<Fig wide caption={<><b>Senin modelin, meta cihazında.</b> ✓ işaretli anahtarlar gerçek checkpoint'te de var, yani ağırlık yüklenince doğrudan oturacak. <code>self_attn</code> şimdilik <code>Identity</code>, parametresi yok.</>}>
+<ModuleTreeView />
+</Fig>
+
+## Parametreler nerede?
+
+<Fig caption={<><b>Modelin ağırlığı MLP'de.</b> 18 MLP toplamın üçte ikisi. Embedding tablosu (= lm_head, bkz. <Link to="/gemma/tying">5.7</Link>) beşte bir. 37 RMSNorm'un toplamı ise sadece 75 bin.</>}>
+<ParamShare />
+</Fig>
+
+<Predict q="18 katmanın her birinde 3 Linear var: gate, up, down. Her biri 2048 × 16384. Bir katmanın MLP'si kaç parametre?" hint="bias yok">
+3 × 2048 × 16384 = <b>100.663.296</b> ≈ 100.7 M. 18 katmanda 1.81 B. RMSNorm'lar 2048'er parametre, yanında yuvarlama hatası kadar kalıyor.
+</Predict>
+
+## Bir token dizisinin yolculuğu
+
+Gemma tarafında tek bir forward'da tensörün başına gelen her şey. Dikdörtgenin yüksekliği dizi uzunluğu T, genişliği son eksen (log ölçek).
+
+<Scrolly label="Gemma forward, şekiller" figure={(s) => <ShapeJourney step={s} />}>
+<Step>**`input_ids`** <S s="1, 260" ax="B,T" />. 256 tane `<image>` yer tutucusu (mavi) ve 4 metin token'ı (yeşil). Henüz sadece tam sayılar var.</Step>
+<Step>**`embed_tokens`**: her id tablodan bir satır seçiyor ve son eksen 2048 oluyor. Bu bir hesap değil, indeksleme. `<image>` konumları da tablodan geçiyor ama birazdan üzerlerine yazılacak.</Step>
+<Step>**Birleştirme** (`paligemma.py`): 256 görsel konuma projektörden gelen özellikler yazılıyor (mor). Şekil değişmiyor.</Step>
+<Step>**× √d**: bütün dizi 45.25 ile çarpılıyor. Şekil aynı, büyüklük değişiyor (<Link to="/gemma/sqrt-d">5.2</Link>).</Step>
+<Step>**18 decoder katmanı**: her katman <S s="B, T, D" /> alıp <S s="B, T, D" /> veriyor. Katmanlar aynı akışa okuyup yazıyor (<Link to="/gemma/akis">5.1</Link>).</Step>
+<Step>**Son norm**: akış tek bir kez normalize ediliyor (<Link to="/gemma/rmsnorm">5.3</Link>).</Step>
+<Step>**lm_head**: son eksen 2048'den **257216**'ya genişliyor, her konum için sözlükteki her token'a bir skor. float32'de 260 × 257216 × 4 bayt ≈ 255 MB (<Link to="/gemma/tying">5.7</Link>).</Step>
+</Scrolly>
+
+<Callout kind="ozet">
+Şekil sadece iki yerde değişiyor: girişte (id → vektör) ve çıkışta (vektör → sözlük skoru). Aradaki 18 katmanın hepsi <S s="B, T, D" />'den <S s="B, T, D" />'ye. Bu tesadüf değil, katmanların hepsi aynı **akışa** okuyup yazıyor. Bir sonraki sayfanın konusu bu.
+</Callout>
+
+## Bu bölümün sayfaları
+
+| | Konu | Kodda |
+|---|---|---|
+| <Link to="/gemma/akis">5.1</Link> | Residual akışı ("otoyol"), pre-norm | `GemmaDecoderLayer.forward` |
+| <Link to="/gemma/sqrt-d">5.2</Link> | √d ölçeği, görsel token'ların gidiş-dönüşü, bf16 | `GemmaModel.forward`, `_merge_input_ids_with_image_features` |
+| <Link to="/gemma/rmsnorm">5.3</Link> | RMSNorm: (1+w), float32, keepdim, işlem sırası | `GemmaRMSNorm` |
+| <Link to="/gemma/geglu">5.4</Link> | GeGLU: gate/up/down | `GemmaMLP` |
+| <Link to="/gemma/katman">5.5</Link> | Decoder katmanının iskeleti | `GemmaDecoderLayer` |
+| <Link to="/gemma/model">5.6</Link> | ModuleList, son norm | `GemmaModel` |
+| <Link to="/gemma/tying">5.7</Link> | Weight tying, `logits.float()` | `GemmaForCausalLM`, `tie_weights` |
+| <Link to="/gemma/dogrulama">5.8</Link> | `check_gemma.py` nasıl çalışıyor | `checks/check_gemma.py` |
+| <Link to="/gemma/sina">5.9</Link> | Kendini sına, ileriye notlar | |

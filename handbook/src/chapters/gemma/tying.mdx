@@ -1,0 +1,74 @@
+import { Callout, Fig, Predict, S, Impact } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { ManimVideo } from "../../components/misc";
+import { ObjectDiagram, TyingFacts, LogitMemory, LogitPrecision } from "./w/Tying";
+import { TyingScene } from "./w/Scenes3D";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { Link } from "react-router-dom";
+
+# lm_head ve weight tying
+
+<p className="lead">Modelin en büyük tek matrisi iki iş yapıyor: girişte token'ları vektöre çeviriyor, çıkışta vektörleri token skorlarına. İki <code>nn.Linear</code> değil, iki <b>ad</b> ve tek bir nesne.</p>
+
+## Tek levha, iki rol
+
+<Scrolly label="Bir matris, iki iş" figure={(s) => <TyingScene step={s} />}>
+<Step>
+**Tablo.** <S s="V, D" ax="V,D" /> boyutunda tek bir matris: her satır bir token'ın vektörü. Burada 10 × 6, gerçekte 257216 × 2048 (527 M sayı). Küplerin üstüne gelince değerleri görünür.
+</Step>
+<Step>
+**Girişte: sözlük.** `embed_tokens(id)` hiçbir hesap yapmıyor: id = 3 ise 3. satırı alıp akışa veriyor. Satırın kopyasının sola uçtuğuna dikkat et. Bu bir indeksleme: <span className="mono">W[ids]</span>.
+</Step>
+<Step>
+**Çıkışta: ölçüt.** Son gizli durum (turuncu) **aynı** matrisin her satırıyla nokta çarpımına giriyor: <span className="mono">logits = norm(h) @ Wᵀ</span>. Sağdaki çubuklar logit'ler. En uzunu (vurgulu) h'ye en çok benzeyen satır, yani bir sonraki token.
+</Step>
+<Step>
+**İki rol, tek nesne.** Girişte satır seçen ve çıkışta skor üreten aynı tensör. Model bir token'ın embedding'ini, o token'ı üretmek istediğinde akışın varması gereken yön olarak öğreniyor. Bunun yanında 527 M parametre tasarruf ediliyor.
+</Step>
+</Scrolly>
+
+<CodeWalk file="gemma.py" symbol="GemmaForCausalLM" notes={[
+  { match: "self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)", title: "geçici lm_head", text: <><code>nn.Linear(2048, 257216)</code>: ağırlık şekli <S s="257216, 2048" ax="V,D" />, embedding tablosuyla <b>aynı</b>. PyTorch Linear ağırlığı [çıkış, giriş] tuttuğu için transpoz gerekmiyor: <code>h @ W.T</code>. Bu nesne kısa ömürlü, <code>tie_weights</code> onu değiştirecek.</> },
+  { match: "def tie_weights(self)", title: "tie_weights", text: <>Kim çağırıyor? <code>PaliGemmaForConditionalGeneration.__init__</code>, en sonda. <code>check_gemma.py</code>'de elle çağrılıyor.</> },
+  { match: "self.lm_head.weight = self.model.embed_tokens.weight", title: "nesne bağlama", text: <><code>nn.Module.__setattr__</code> bir <code>Parameter</code> atamasını yakalayıp kaydediyor. Değer kopyalanmıyor, iki ad aynı nesneyi gösteriyor. Aşağıdaki nesne şemasına bak.</> },
+  { match: "logits = self.lm_head(hidden_states)", title: "logit'ler", text: <><S s="B, T, 2048" ax="B,T,D" /> → <S s="B, T, 257216" ax="B,T,V" />. Her konum için sözlükteki her token'a bir skor. Bu modelin en pahalı matmul'u: 260 × 2048 × 257216 ≈ 137 G çarpma.</> },
+  { match: "return logits.float()", title: ".float()", text: <>bf16 logit'ler softmax için kaba. Aşağıdaki hassasiyet hesabına bak. HF de aynısını yapıyor.</> },
+]} />
+
+<CodeWalk file="paligemma.py" symbol="PaliGemmaForConditionalGeneration.tie_weights" />
+
+## Python'da "aynı nesne" ne demek?
+
+<Fig caption={<><b>İki ad, bir nesne.</b> Adımlar arasında gezin. Dördüncü sekme sık yapılan hatayı gösteriyor.</>}>
+<ObjectDiagram />
+</Fig>
+
+<Predict q="tie_weights'ten sonra model.parameters() kaç tane [257216, 2048] tensör döndürür? state_dict() kaç anahtar?">
+<code>parameters()</code> <b>bir</b> tane: aynı nesneyi iki kez saymıyor. <code>state_dict()</code> ise <b>iki</b> anahtar döndürüyor (<code>model.embed_tokens.weight</code> ve <code>lm_head.weight</code>), ikisi aynı belleği gösteriyor. Senin oyuncak modelinde ölçülen: tying öncesi 9.70 M, sonrası 9.57 M parametre. Fark 512 × 256 = 131 K, yani tam bir tablo.
+</Predict>
+
+## Gerçek checkpoint'te lm_head yok
+
+<Fig caption={<><b>Aşama 6'ya not.</b> Google'ın checkpoint'i bağlı tensörü bir kez saklıyor. Senin <code>state_dict()</code>'in ise iki anahtar üretiyor.</>}>
+<TyingFacts />
+</Fig>
+
+<Callout kind="dikkat" title="Aşama 6'da ağırlık yüklerken">
+<code>model.load_state_dict(checkpoint)</code> varsayılan <code>strict=True</code> ile <b>"missing key: language_model.lm_head.weight"</b> hatası verecek. Çözüm basit ve tying sayesinde güvenli: ya o anahtarı ayrıca embedding'den doldur, ya <code>strict=False</code> ile yükleyip eksik listesinin <i>sadece</i> lm_head (ve henüz yazılmadıysa attention) olduğunu kontrol et. Yüklemeden sonra <code>lm_head.weight is embed_tokens.weight</code> hâlâ True olmalı.
+</Callout>
+
+## logits.float(): bellek ve hassasiyet
+
+<Fig caption={<><b>Logit tensörünün boyutu.</b> T × 257216 hızla büyüyor. 896 px'te tüm dizi için float32 logit'ler 4 GB'ı geçiyor. Üretimde sadece son konumun logit'leri gerekiyor. HF bu yüzden <code>logits_to_keep</code> parametresini kullanıyor.</>}>
+<LogitMemory />
+</Fig>
+
+<Fig caption={<><b>bf16 logit'lerin kabalığı.</b> Logit'ler tipik olarak 10–40 aralığında. Bu aralıkta bf16'nın adımı 0.0625–0.25. Softmax'ta olasılıklar logit farkının üsteliyle orantılı, yani tek bir yuvarlama olasılığı %6–28 kaydırabiliyor. Greedy decode'da iki aday yakınsa sıralama bile değişebilir.</>}>
+<LogitPrecision />
+</Fig>
+
+<Impact from="gemma.py: return logits.float()" to="aşama 6: greedy decode, HF ile token token eşleşme">
+Aşama 6'da kendi greedy üretimini HF'ninkiyle token token karşılaştıracaksın. İki taraf da float32 logit üzerinde argmax aldığında eşleşme kolaylaşır. bf16 logit'lerle eşit skorlu adaylarda farklı token seçilebilir.
+</Impact>
+
+<ManimVideo scene="WeightTying" caption="Aynı matris: girişte satır seçimi, çıkışta transpozla çarpım." />

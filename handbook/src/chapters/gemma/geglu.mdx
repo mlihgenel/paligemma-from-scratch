@@ -1,0 +1,84 @@
+import { Callout, Fig, Predict, S, Impact } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { ManimVideo } from "../../components/misc";
+import { GateMaps, MlpParams } from "./w/Glu";
+import { MlpScene } from "./w/Scenes3D";
+import { GeluPlane } from "./w/Planes";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { Link } from "react-router-dom";
+
+# GeGLU MLP
+
+<p className="lead">Modelin üçte ikisi bu sınıfta. Yaptığı iş basit: her token'ı ayrı ayrı 2048'den 16384'e genişletip geri daraltmak. Klasik MLP'den farkı, genişletmenin iki ayrı yoldan yapılması ve birinin diğerini <b>kapı</b> gibi açıp kapaması.</p>
+
+## Klasik MLP ve gated MLP
+
+SigLIP'te yazdığın MLP klasik: <span className="mono">fc2(gelu(fc1(x)))</span>. Tek bir yol var: genişlet, aktivasyon, daralt. Gemma'nın MLP'si ise:
+
+$$
+\mathrm{MLP}(x) = W_{\text{down}}\Big(\,\mathrm{GELU}(W_{\text{gate}}\,x) \;\odot\; W_{\text{up}}\,x\,\Big)
+$$
+
+İki paralel genişletme var. **up** "ne geçsin" bilgisini taşıyor (doğrusal, aktivasyonsuz). **gate** "ne kadar geçsin" kararını veriyor (GELU'dan geçiyor). ⊙ eleman eleman çarpım. Kapı ≈ 0 ise o boyutta up'ın değeri ne olursa olsun hiçbir şey geçmiyor.
+
+<Scrolly label="GemmaMLP, üç token" figure={(s) => <MlpScene step={s} />}>
+<Step>
+**Girdi.** Norm'dan geçmiş akış: 3 token × 4 boyut (gerçekte <S s="T, 2048" ax="T,D" />). Her küp bir sayı, renk değeri gösteriyor. Üstüne gelince değer görünür.
+</Step>
+<Step>
+**İki paralel genişletme.** Aynı x iki ayrı ağırlık levhasından geçiyor: `gate_proj` (pembe) ve `up_proj` (turuncu). İkisinin çıktısı da <S s="T, I" ax="T,I" />: burada 8, gerçekte 16384. Linear sadece son ekseni dönüştürüyor, token'lar birbirine karışmıyor.
+</Step>
+<Step>
+**Kapı.** GELU **sadece gate'e** uygulanıyor. Negatif gate değerleri ≈ 0'a iniyor: gri küpler kapalı kapılar. up yolu (soluk) olduğu gibi bekliyor.
+</Step>
+<Step>
+**⊙ Kapı × değer.** İki yolun küpleri aynı konuma akıp eleman eleman çarpılıyor. Kapı kapalıysa sonuç ≈ 0, up'ın değeri ne olursa olsun. Mor küplerin üstüne gelince çarpımı görebilirsin.
+</Step>
+<Step>
+**Daralt.** `down_proj` levhası <S s="T, I" ax="T,I" /> → <S s="T, D" ax="T,D" /> dönüştürüyor. Bu çıktı katmanda akışa eklenecek güncelleme.
+</Step>
+</Scrolly>
+
+## Kodda nerede?
+
+<CodeWalk file="gemma.py" symbol="GemmaMLP" notes={[
+  { match: "self.gate_proj = nn.Linear", title: "gate_proj", text: <><code>nn.Linear(2048, 16384, bias=False)</code>. Ağırlık şekli <S s="16384, 2048" ax="I,D" />: PyTorch Linear ağırlığı <b>[çıkış, giriş]</b> tutar ve <code>x @ W.T</code> hesaplar. HF anahtarı <code>mlp.gate_proj.weight</code>.</> },
+  { match: "self.up_proj = nn.Linear", title: "up_proj", text: <>gate ile aynı şekilde ama ayrı ağırlıklar. Bias yok: Gemma'da hiçbir Linear'da bias yok (SigLIP'te var).</> },
+  { match: "self.down_proj = nn.Linear", title: "down_proj", text: <><code>nn.Linear(16384, 2048)</code>, ağırlık <S s="2048, 16384" ax="D,I" />. 16384'ü tekrar akışın boyutuna indiriyor.</> },
+  { match: "gate = self.gate_proj(x)", title: "gate", text: <><S s="B, T, 2048" ax="B,T,D" /> → <S s="B, T, 16384" ax="B,T,I" />. Linear sadece <b>son ekseni</b> dönüştürüyor. B ve T eksenleri olduğu gibi kalıyor, yani her token ayrı ayrı çarpılıyor.</> },
+  { match: "up = self.up_proj(x)", title: "up", text: <>Aynı girdi, ikinci yol. <S s="B, T, 16384" ax="B,T,I" />.</> },
+  { match: "h = F.gelu(gate, approximate=\"tanh\") * up", title: "kapı ⊙ değer", text: <>GELU <b>sadece gate'e</b> uygulanıyor. <code>approximate="tanh"</code> şart: HF config'inde <code>hidden_activation="gelu_pytorch_tanh"</code>. <code>*</code> eleman eleman çarpım, iki <S s="B, T, 16384" ax="B,T,I" /> tensör.</> },
+  { match: "return self.down_proj(h)", title: "daralt", text: <><S s="B, T, 16384" ax="B,T,I" /> → <S s="B, T, 2048" ax="B,T,D" />. Bu çıktı katmanda akışa eklenecek (<Link to="/gemma/akis">5.1</Link>).</> },
+]} />
+
+## Kapının içine bak
+
+<Fig wide caption={<><b>Oyuncak modelin katman 0'ı, gerçek akış girdisiyle.</b> Bir satıra tıklayarak token seç. Kapı kapalı olan boyutlarda (gri kutular) up'ın değeri ne olursa olsun sonuç ≈ 0. Oyuncak modelde ara boyutların yaklaşık %40'ı bu token'lar için kapalı.</>}>
+<GateMaps />
+</Fig>
+
+<Callout kind="neden" title="Kapı neden işe yarıyor?">
+Klasik MLP'de her ara nöron <span className="mono">gelu(w·x)</span>: girdinin <i>tek bir</i> doğrusal fonksiyonunun aktivasyonu. GLU'da her ara nöron <span className="mono">gelu(a·x) · (b·x)</span>: iki doğrusal fonksiyonun <b>çarpımı</b>. Çarpım, girdinin özellikleri arasında ikinci dereceden etkileşimleri doğrudan temsil edebiliyor ("şu varsa şunu geçir"). Shazeer'in 2020 tarihli <i>GLU Variants Improve Transformer</i> makalesi aynı bütçede GLU türevlerinin klasik MLP'yi tutarlı biçimde geçtiğini gösterdi. Makalenin dürüst sonucu da ilginç: "Neden işe yaradığına dair bir açıklama sunmuyoruz. Başarıyı ilahi lütfa bağlıyoruz."
+</Callout>
+
+## Aktivasyon: GELU (tanh)
+
+<Fig wide caption={<><b>GELU, SiLU ve ReLU.</b> x noktasını eksen boyunca sürükle: üç aktivasyonun o noktadaki değeri ve GELU'nun tanh yaklaşımıyla tam (erf) hali arasındaki fark canlı görünür. Gemma tanh yaklaşımıyla eğitildi.</>}>
+<GeluPlane />
+</Fig>
+
+## Parametre hesabı
+
+<Fig caption={<><b>Neden üç matris?</b> Kaydırıcılarla dene.</>}>
+<MlpParams />
+</Fig>
+
+<Predict q="MLP her token'ı ayrı işliyorsa 260 token'lık diziyi tek seferde vermekle 260 kez tek token vermek arasında fark var mı?">
+Matematiksel olarak <b>yok</b>. Oyuncak modelde ölçülen max fark ~1e-6, sadece float toplama sırasından gelen gürültü. Token'lar arasında bilgi taşıyan tek yer attention (aşama 5). MLP bilgiyi token'ın kendi içinde dönüştürüyor. Pratikte toplu vermek çok daha hızlı, çünkü tek bir büyük matmul oluyor.
+</Predict>
+
+<Impact from="gemma.py: GemmaMLP" to="Gemma 2: aynı sınıf, I = 9216">
+Gemma 2 2B'de MLP aynı (gate/up/down, gelu_tanh). Sadece config değişiyor: hidden 2304, intermediate 9216 (= 4d). Bu sınıfa aşama 8'de dokunmana gerek yok.
+</Impact>
+
+<ManimVideo scene="GeGLUGating" caption="Bir token'ın vektörü iki yola ayrılıyor; kapı ⊙ değer; daralma." />

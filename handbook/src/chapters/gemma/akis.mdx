@@ -1,0 +1,108 @@
+import { Callout, Fig, Predict, S, Impact } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { BreakIt, ManimVideo } from "../../components/misc";
+import { StreamCompare, UpdateSizes } from "./w/Stream";
+import { HighwayScene } from "./w/Scenes3D";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { Note } from "../../components/ui";
+import { Link } from "react-router-dom";
+
+# Residual akışı: otoyol
+
+<p className="lead">Gemma'yı anlamanın anahtarı tek bir değişkende: <code>hidden_states</code>. Bu değişken 18 katman boyunca hiç kopmadan akan bir <b>otoyol</b>. Katmanlar bu yoldan bir kopya okuyup üstüne bir güncelleme ekliyor.</p>
+
+## Fikir: katmanlar akışı değiştirmez, akışa ekler
+
+Klasik bir sinir ağında her katman girdisini alıp yerine yenisini koyar: <span className="mono">h ← f(h)</span>. Residual bağlantıda ise katman sadece bir fark hesaplar ve bu fark akışa eklenir:
+
+$$
+h \leftarrow h + f(\mathrm{norm}(h))
+$$
+
+Bu satırın iki önemli sonucu var.
+
+- **Akış hiç normalize edilmiyor.** `norm` sadece dalın gördüğü kopyaya uygulanıyor. Akışın kendisi katmanlar boyunca büyüyebiliyor, son normalizasyon en sondaki `self.norm` ile tek seferde yapılıyor.
+- **Her katmanın girdisi ölçekten bağımsız.** `f`'nin gördüğü `norm(h)` her zaman benzer büyüklükte (RMS ≈ 1·(1+w)), akış ne kadar büyük olursa olsun. Katmanların dengeli kalmasının nedeni bu.
+
+## Bir token'ın vektörünü takip et
+
+<Scrolly label="Residual akışı, tek bir token" figure={(s) => <HighwayScene step={s} />}>
+<Step>
+**Akış.** Mavi çubuklar bir token'ın vektörü: her çubuk bir boyut, yüksekliği değeri. Bu vektör embedding × √d olarak şeride giriyor. Şerit `hidden_states` değişkeni, yani otoyol. Çubukların üstüne gelince değerleri görünür.
+</Step>
+<Step>
+**Dal okur.** Attention bloğu akıştan bir **kopya** alıyor ve `input_layernorm`'dan geçiriyor: pembe çubuklar. Kopyanın RMS'i 1, akış ne kadar büyük olursa olsun. Akışın kendisi şeritte değişmeden bekliyor (kodda `residual` değişkeni).
+</Step>
+<Step>
+**Dal hesaplar.** Kopya `self_attn`'den geçiyor ve bir **güncelleme** üretiyor: turuncu çubuklar. Şu an attention `Identity`, burada yer tutucu olarak rastgele bir dönüşüm var (check_gemma'daki stub gibi).
+</Step>
+<Step>
+**⊕ Akışa yaz.** Güncelleme şeride iniyor ve akışa **toplanıyor**: <span className="mono">h ← h + f(norm(h))</span>. Mavi çubukların hepsi biraz değişti ama hiçbiri yeniden ölçeklenmedi. Embedding'deki bilgi hâlâ orada.
+</Step>
+<Step>
+**MLP için aynısı.** `post_attention_layernorm` akışın yeni halinden bir kopya alıyor, MLP bir güncelleme üretiyor, ⊕ ile akışa ekleniyor. Bir decoder katmanı bu iki daldan ibaret.
+</Step>
+<Step>
+**18 katman sonra.** Akış her katmanda biraz daha büyüdü ve dönüştü, ama hiç normalize edilmedi. lm_head'e gitmeden önce `model.norm` tek bir kez normalize ediyor. Sahneyi döndürüp çubukları karşılaştırabilirsin.
+</Step>
+</Scrolly>
+
+## Kodda nerede?
+
+<CodeWalk file="gemma.py" symbol="GemmaDecoderLayer.forward" notes={[
+  { match: "residual = hidden_states", title: "Akıştan kopya", text: <>Akışın o anki değeri saklanıyor. <b>Norm'dan önce</b> saklanması kritik: residual norm'lu kopyadan alınırsa akışın kendisi normalize edilmiş olur (aşağıdaki "Ne bozulur?").</> },
+  { match: "self.input_layernorm(hidden_states)", title: "Dal: norm", text: <>Bu satırdan sonra <code>hidden_states</code> artık akışın kendisi değil, normalize edilmiş bir kopya. Akış <code>residual</code> değişkeninde bekliyor. Şekil değişmiyor: <S s="B, T, D" />.</> },
+  { match: "self.self_attn(hidden_states)", title: "Dal: attention (şimdilik Identity)", text: <>Aşama 5'te token'lar arası bilgi buradan geçecek. Şu an <code>nn.Identity</code>, kopyayı aynen döndürüyor. Yani bu blok şu an <code>h + norm(h)</code> hesaplıyor. Bu sayfanın deneylerinde attention yerine <code>check_gemma.py</code>'deki gibi rastgele bir linear katman var.</> },
+  { match: "hidden_states = residual + hidden_states", title: "Yazma: akışa ekle", text: <>Otoyolun ⊕ noktası. Dalın çıktısı akışa toplanıyor. İki tensör de <S s="B, T, D" />, eleman eleman toplama.</> },
+  { match: "self.post_attention_layernorm(hidden_states)", title: "İkinci dal: norm", text: <>Aynı desen, bu kez MLP için. Adı yanıltıcı: "post attention" denmesinin nedeni attention'dan <i>sonra</i> gelmesi, ama aslında MLP'nin <i>girişindeki</i> norm. Bkz. <Link to="/gemma/katman">5.5</Link>.</> },
+  { match: "hidden_states = self.mlp(hidden_states)", title: "Dal: MLP", text: <>GeGLU. Her token ayrı işleniyor. Bkz. <Link to="/gemma/geglu">5.4</Link>.</> },
+  { match: "return hidden_states", title: "Çıkış", text: <>Girişle aynı şekil <S s="B, T, D" />. Bir sonraki katman bunu aynen alıyor. 18 katman böyle zincirleniyor.</> },
+]} />
+
+## Ne bozulur? Residual'ı norm'dan sonra saklamak
+
+İlk bakışta zararsız görünüyor: iki satırın yeri değişiyor, o kadar. Ama otoyolun anlamı tamamen değişiyor.
+
+<BreakIt title="residual = hidden_states satırını norm'un altına taşı"
+  good={`residual = hidden_states                       # ← akış saklanıyor
+hidden_states = self.input_layernorm(hidden_states)
+hidden_states = self.self_attn(hidden_states)
+hidden_states = residual + hidden_states`}
+  bad={`hidden_states = self.input_layernorm(hidden_states)
+residual = hidden_states                       # ← norm'lu kopya saklanıyor
+hidden_states = self.self_attn(hidden_states)
+hidden_states = residual + hidden_states`}
+  result={(b) => b ? (
+    <div><StreamCompare show={["normal", "residual_after_norm"]} /><p className="small" style={{marginTop: 8}}>Akış her alt blokta yeniden normalize ediliyor. Önceki katmanların yazdıkları büyüklük bilgisiyle birlikte siliniyor. Embedding'e benzerlik ilk iki katmanda <b>0.2</b>'ye çöküyor. Bu, fiilen <b>post-norm</b> mimarisi (mor çizgi ile neredeyse aynı).</p></div>
+  ) : (
+    <div><StreamCompare show={["normal"]} /><p className="small" style={{marginTop: 8}}>Senin kodunda akış, katmanlar boyunca embedding'deki bilgiyi yavaş yavaş dönüştürüyor: benzerlik 1.0'dan 0.84'e iniyor, norm 48'den 57'ye çıkıyor.</p></div>
+  )}
+/>
+
+## Pre-norm ve post-norm
+
+Orijinal Transformer (2017) **post-norm** kullanıyordu: önce topla, sonra normalize et, <span className="mono">h ← norm(h + f(h))</span>. Gemma, Llama ve SigLIP **pre-norm** kullanıyor: <span className="mono">h ← h + f(norm(h))</span>.
+
+<Fig caption={<><b>Üç mimari, aynı oyuncak model.</b> Pre-norm'da akış embedding'i taşımaya devam ediyor. Post-norm ve "residual norm'dan sonra" hatası akışı her adımda yeniden ölçekliyor.</>}>
+<StreamCompare show={["normal", "residual_after_norm", "post_norm"]} />
+</Fig>
+
+<Callout kind="neden" title="Pre-norm neden kazandı? Gradyan yolu">
+Pre-norm'da çıkış, girişin <i>kendisini</i> içeriyor: <span className="mono">h_L = h_0 + Σ f_i(…)</span>. Türev alınca <span className="mono">∂h_L/∂h_0 = I + …</span> çıkıyor. Kayıptan embedding'e kadar hiçbir norm'dan ya da katmandan geçmeyen düz bir "kimlik" yolu var. 18 (hatta 46) katmanlık bir modelde gradyan bu yoldan sönmeden geliyor. Post-norm'da bu yol her katmanda bir norm'dan geçmek zorunda. Derin post-norm modeller bu yüzden learning-rate warmup olmadan zor eğitiliyor.
+</Callout>
+
+## Katmanlar akışa ne kadar yazıyor?
+
+<Fig caption={<><b>Güncellemelerin büyüklüğü ve akışın büyüklüğü.</b> Her dal, norm'lu kopyadan benzer büyüklükte güncellemeler üretiyor. Akış bunları biriktirip büyüyor. Oyuncak modelde MLP ağırlıkları rastgele (std 0.02), gerçek modelde oranlar farklı ama yapı aynı.</>}>
+<UpdateSizes />
+</Fig>
+
+<Predict q="Şu anki kodunda self_attn = nn.Identity(). Attention bloğu tam olarak ne hesaplıyor?">
+<code>residual + Identity(input_layernorm(h))</code> = <b>h + norm(h)</b>. Yani attention bloğu şu an akışa kendi normalize edilmiş kopyasını ekliyor: anlamsız ama zararsız bir yer tutucu. <code>check_gemma.py</code> bu yüzden testte iki tarafa da aynı rastgele <code>StubAttention</code>'ı koyuyor. Yoksa HF'nin gerçek attention'ıyla senin Identity'n karşılaştırılırdı.
+</Predict>
+
+<Impact from="gemma.py: residual = hidden_states" to="Gemma 2: sandwich norm (aşama 8)">
+Gemma 2 her dalın <i>çıktısına</i> da bir norm ekliyor: <span className="mono">h + norm₂(f(norm₁(h)))</span>. Akışın kendisi yine normalize edilmiyor, otoyol fikri aynı kalıyor. Değişen tek şey dalın akışa ne kadar büyük bir güncelleme yazdığının da sınırlanması.
+</Impact>
+
+<ManimVideo scene="ResidualHighway" caption="Bir token'ın vektörü 18 katman boyunca: her dal okur, işler, akışa ekler." />

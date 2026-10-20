@@ -1,0 +1,42 @@
+import { Callout, ConceptQ, Fig, S } from "../../components/ui";
+import { LineCards } from "./w/Cards";
+import { Link } from "react-router-dom";
+
+# Kendini sına
+
+<p className="lead">Aşama 4'ün kavram soruları ve gemma.py'nin her anlamlı satırı için "bu olmasa ne bozulur?" kartları. Cevabı açmadan önce kendin söyle.</p>
+
+## ROADMAP kavram soruları
+
+<ConceptQ n={1} q="RMSNorm LayerNorm'dan neyi çıkarıyor? Neden yine de işe yarıyor?">
+Ortalamayı çıkarma (merkezleme) ve bias'ı atıyor. Sadece ölçekleme, yani RMS'e bölme kalıyor. Zhang ve Sennrich (2019) eğitimi kararlı tutan şeyin büyük ölçüde ölçek normalizasyonu olduğunu gösterdi: girdiyi yeniden ölçeklemek çıktıyı değiştirmiyor (<Link to="/gemma/rmsnorm">5.3</Link> laboratuvarı). Daha ucuz ve kalite neredeyse aynı. Geometrik olarak: LayerNorm noktaları bir düzleme izdüşürüp çembere, RMSNorm doğrudan küreye taşıyor.
+</ConceptQ>
+<ConceptQ n={2} q="Gated MLP'de (GeGLU/SwiGLU) neden 2 yerine 3 matris var? Parametre sayısını eşit tutmak için ara boyut nasıl ayarlanıyor?">
+Üçüncü matris kapı (gate). Ara katmanı iki doğrusal projeksiyonun çarpımı yapıyor: <span className="mono">gelu(W_g x) ⊙ (W_u x)</span>. Klasik MLP 2·d·4d = 8d² parametre. GLU 3·d·I. Eşitlemek için I = 8d/3 (Llama). Gemma 1 bu kuralı uygulamıyor: I = 8d = 16384, klasik MLP'nin 3 katı. 18 katmanda 1.81 B, modelin üçte ikisi (<Link to="/gemma/geglu">5.4</Link>).
+</ConceptQ>
+<ConceptQ n={3} q="Weight tying 256k × 2048'lik bir vocab'da kaç parametre kazandırır?">
+257216 × 2048 = <b>526.778.368</b> ≈ 527 M parametre. bf16'da ≈ 1 GB, float32'de ≈ 2 GB. Gerçek checkpoint'te lm_head anahtarı hiç yok. Senin <code>state_dict</code>'inde ise var, aşama 6'da yüklerken buna dikkat (<Link to="/gemma/tying">5.7</Link>).
+</ConceptQ>
+
+## Bu satır olmasa ne bozulur?
+
+<Fig wide caption={<><b>gemma.py kart destesi.</b> Kartı çevirmek için tıkla. Satırlar senin dosyandan canlı okunuyor.</>}>
+<LineCards />
+</Fig>
+
+## Aşama 5 ve sonrası için notlar
+
+Kitabı hazırlarken gerçek veriden ve HF kaynağından çıkan, ileride işine yarayacak notlar:
+
+<Callout kind="dikkat" title="1. position_ids PaliGemma'da 1'den başlıyor">
+Kurulu HF <code>modeling_paligemma.py</code>'de: <code>position_ids = position_ids.unsqueeze(0) + 1  # Paligemma positions are 1-indexed</code>. RoPE'u yazarken (aşama 5) ve HF ile karşılaştırırken konumları 0'dan değil 1'den başlatman gerekecek.
+</Callout>
+<Callout kind="dikkat" title="2. Checkpoint'te 72 attention anahtarı bekliyor">
+<code>layers.N.self_attn.{"{q,k,v,o}"}_proj.weight</code>, 18 katman. Adlar tam böyle olmalı. q_proj <S s="2048, 2048" ax="D,D" />, k/v_proj <S s="256, 2048" ax="hd,D" /> (1 KV head × 256), o_proj <S s="2048, 2048" ax="D,D" />. Bias yok.
+</Callout>
+<Callout kind="dikkat" title="3. lm_head.weight checkpoint'te yok">
+<code>load_state_dict</code>'te <code>strict=True</code> hata verir. Tying sayesinde güvenle atlanabilir (<Link to="/gemma/tying">5.7</Link>).
+</Callout>
+<Callout kind="dikkat" title="4. bf16'da görsel token'larda ~%0.5 fark normal">
+Senin ÷√d · ×√d yolun ile HF 5.x'in "hiç ölçekleme" yolu bf16'da birebir değil (<Link to="/gemma/sqrt-d">5.2</Link>). float32'de karşılaştırırsan birebir olmalı.
+</Callout>
