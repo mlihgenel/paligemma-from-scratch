@@ -39,7 +39,7 @@ test("5.3 3D: küpün üstüne gelince değer görünüyor", async ({ page }) =>
   expect(found).toBe(true);
 });
 
-for (const p of ["/oyun-alani", "/hepsi", "/gemma", "/gemma/akis", "/gemma/sqrt-d", "/gemma/geglu", "/gemma/katman", "/gemma/tying", "/gemma/dogrulama"]) {
+for (const p of ["/goruntu", "/encoder", "/oyun-alani", "/hepsi", "/gemma", "/gemma/akis", "/gemma/sqrt-d", "/gemma/geglu", "/gemma/katman", "/gemma/tying", "/gemma/dogrulama"]) {
   test(`${p} scrolly: son adıma kadar ilerliyor`, async ({ page }) => {
     const errs: string[] = [];
     page.on("pageerror", (e) => errs.push(e.message));
@@ -67,4 +67,29 @@ test("6: masked_scatter adımında görsel hücre hover'ı hedefini söylüyor",
     ok = (await page.locator(".tip").filter({ hasText: "scaled_image_features" }).count()) > 0;
   }
   expect(ok).toBe(true);
+});
+
+test("2: yama gezgini hover ile yama ve token değişiyor", async ({ page }) => {
+  await page.goto("http://localhost:5173/#/goruntu", { waitUntil: "networkidle" });
+  const fig = page.locator(".fig").filter({ hasText: "Yama gezgini" });
+  await fig.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(1500);
+  const img = fig.locator("div[style*='crosshair']").first();
+  const b = (await img.boundingBox())!;
+  await page.mouse.move(b.x + b.width * 0.1, b.y + b.height * 0.1);
+  await expect(fig.getByText("yama (1, 1) → token 17")).toBeVisible();
+});
+
+test("4: kutu çizince <loc> token'ları güncelleniyor", async ({ page }) => {
+  await page.goto("http://localhost:5173/#/kopru", { waitUntil: "networkidle" });
+  const fig = page.locator(".fig").filter({ hasText: "Bir kutu çiz" });
+  await fig.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(1000);
+  const img = fig.locator("div[style*='crosshair']").first();
+  const b = (await img.boundingBox())!;
+  await page.mouse.move(b.x + 1, b.y + 1);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await expect(fig.getByText(/<loc000\d><loc000\d><loc05\d\d><loc05\d\d>/)).toBeVisible();
 });
