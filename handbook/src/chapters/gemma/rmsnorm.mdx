@@ -142,7 +142,7 @@ Gemma tek yuvarlama yapıyor, Llama iki. Yukarıdaki laboratuvarda **bfloat16** 
 Bu fark float32'de tamamen kayboluyor, sadece bf16'da görülüyor ve 18 katman × 2 norm boyunca birikiyor. <code>check_gemma.py</code>'deki bf16 testi <code>exact=True</code> (bit bit eşitlik) kullanıyor, çünkü 1 ulp'lik fark <code>allclose</code>'un toleransına girerdi.
 </Callout>
 
-<Impact from="gemma.py: GemmaRMSNorm" to="Gemma 2 (aşama 8): katman başına 4 norm">
+<Impact from="gemma.py: GemmaRMSNorm" to="Gemma 2: katman başına 4 norm">
 Aynı sınıf Gemma 2'de katman başına 4 kez kullanılacak (sandwich norm). <code>(1 + w)</code> ve float32 sırası aynen kalıyor.
 </Impact>
 

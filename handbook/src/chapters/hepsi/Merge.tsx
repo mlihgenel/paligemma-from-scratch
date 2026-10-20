@@ -96,8 +96,8 @@ export function ConfigFlow() {
     ["image_token_index", c.image_token_index, "_merge_input_ids_with_image_features", "image_mask = input_ids == 257152"],
     ["pad_token_id", c.text.pad_token_id, "merge (pad_mask) + nn.Embedding(padding_idx)", "pad konumları sıfır"],
     ["text_config.hidden_size", c.text.hidden_size, "merge (÷√d) + GemmaModel (×√d)", "√2048 = 45.25"],
-    ["text_config.head_dim", c.text.head_dim, "aşama 5: GemmaAttention", "config'ten okunuyor, hidden/heads ile hesaplanmıyor"],
-    ["text_config.num_key_value_heads", c.text.num_key_value_heads, "aşama 5: MQA", "k_proj/v_proj: 2048 → 256"],
+    ["text_config.head_dim", c.text.head_dim, "GemmaAttention (sırada)", "config'ten okunuyor, hidden/heads ile hesaplanmıyor"],
+    ["text_config.num_key_value_heads", c.text.num_key_value_heads, "MQA (sırada)", "k_proj/v_proj: 2048 → 256"],
   ];
   return (
     <table>
@@ -109,7 +109,7 @@ export function ConfigFlow() {
   );
 }
 
-/** Aşama 5/6 önizlemesi: prefix-LM maskesi. Prefix (görüntü + prompt) kendi içinde tam, üretilenler causal */
+/** Önizleme: prefix-LM maskesi. Prefix (görüntü + prompt) kendi içinde tam, üretilenler causal */
 export function PrefixMask() {
   const [gen, setGen] = useState(4);
   const [mode, setMode] = useState<"prefix" | "causal">("prefix");

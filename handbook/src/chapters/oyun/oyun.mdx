@@ -21,13 +21,13 @@ import { Link } from "react-router-dom";
 <Step>**÷ √2048.** Gemma birazdan bütün diziyi ×√2048 yapacak. Görsel token'lar bundan etkilenmesin diye önce bölünüyorlar (<Link to="/gemma/sqrt-d">5.2</Link>).</Step>
 <Step>**Birleştirme.** Prompt token'ları embedding tablosundan geliyor (yeşil), `<image>` konumlarına görsel özellikler sırayla yazılıyor. Dizi artık 256 + metin token'ı uzunluğunda (<Link to="/hepsi">Bölüm 6</Link>).</Step>
 <Step>**× √2048.** Bütün dizi 45.25 ile çarpılıyor. Görsel token'lar için net etki ×1, metin token'ları 45 kat büyüyor.</Step>
-<Step>**Gemma decoder × 18.** Her katman akışa iki güncelleme ekliyor (attn + mlp). Attention şimdilik `Identity`: metin token'ları görüntüyü henüz **görmüyor**. Aşama 5'te görecek.</Step>
+<Step>**Gemma decoder × 18.** Her katman akışa iki güncelleme ekliyor (attn + mlp). Attention şimdilik `Identity`: metin token'ları görüntüyü henüz **görmüyor**. Attention yazılınca görecek.</Step>
 <Step>**Son RMSNorm.** 18 katman boyunca büyüyen akış lm_head'den önce bir kez normalize ediliyor.</Step>
-<Step>**lm_head → logit'ler.** Her konum için sözlükteki 257216 token'a bir skor. Üretimde sadece **son** konumun skorları kullanılıyor: argmax → bir sonraki token (aşama 6).</Step>
+<Step>**lm_head → logit'ler.** Her konum için sözlükteki 257216 token'a bir skor. Üretimde sadece **son** konumun skorları kullanılıyor: argmax → bir sonraki token.</Step>
 </Scrolly>
 
 <Callout kind="not" title="Burada ne gerçek, ne değil?">
-Görüntüler, ön işleme ve token'lar gerçek: senin <code>processing.py</code>'n ve PaliGemma tokenizer'ı ile üretildi. Şekiller gerçek boyutlu modelin <code>meta</code> forward'ından geliyor. Sütunlar ise bir temsil, değer taşımıyor. Modelin bu prompt'a <i>ne cevap verdiğini</i> aşama 6'da göreceğiz.
+Görüntüler, ön işleme ve token'lar gerçek: senin <code>processing.py</code>'n ve PaliGemma tokenizer'ı ile üretildi. Şekiller gerçek boyutlu modelin <code>meta</code> forward'ından geliyor. Sütunlar ise bir temsil, değer taşımıyor. Modelin bu prompt'a <i>ne cevap verdiğini</i> model uçtan uca çalışınca göreceğiz.
 </Callout>
 
 ## Serbest mod

@@ -15,7 +15,7 @@ import { Link } from "react-router-dom";
 <CodeWalk file="paligemma.py" symbol="PaliGemmaConfig" notes={[
   { match: "vision_config: SiglipVisionConfig = field(default_factory=lambda", title: "default_factory", text: <>Dataclass'ta değiştirilebilir bir varsayılan (başka bir dataclass nesnesi) doğrudan <code>= SiglipVisionConfig(...)</code> yazılamaz, çünkü bütün örnekler aynı nesneyi paylaşırdı. <code>field(default_factory=lambda: ...)</code> her örnek için yeni bir nesne üretiyor.</> },
   { match: "patch_size=14", title: "so400m", text: <>PaliGemma'nın kodlayıcısı: 1152 boyut, 27 katman, 16 head, 14 px yama. SiglipVisionConfig'in varsayılanları ise siglip-base'in (768, 12, 16 px). Testlerde kullandığın model o.</> },
-  { match: "num_key_value_heads=1", title: "MQA", text: <>8 sorgu head'ine karşı 1 key/value head'i. Aşama 5'te <code>repeat_kv</code> ile çoğaltılacak.</> },
+  { match: "num_key_value_heads=1", title: "MQA", text: <>8 sorgu head'ine karşı 1 key/value head'i. Attention yazılınca <code>repeat_kv</code> ile çoğaltılacak.</> },
   { match: "image_token_index: int = 257152", title: "<image> id'si", text: <>Sözlükte 256000 (Gemma) + 1024 loc + 128 seg = 257152, ilk serbest id. <code>&lt;image&gt;</code> bu.</> },
   { match: "def __post_init__(self)", title: "türetilen alanlar", text: <>Dataclass'ın <code>__init__</code>'inden hemen sonra çalışıyor. Başka alanlardan hesaplanan değerleri burada dolduruyoruz, elle tutarsız değer girilmesin diye.</> },
   { match: "self.text_config.num_image_tokens =", title: "256 nereden geliyor", text: <>(224 / 14)² = 16² = <b>256</b>. 448 px'te 1024, 896 px'te 4096. Çözünürlüğü değiştirmek için sadece <code>image_size</code>'ı değiştirmek yetiyor (konum embedding'leri hariç).</> },
@@ -69,7 +69,7 @@ Gemma'nın gördüğü dizinin her konumu iki kaynaktan birinden geliyor: metin 
 ## forward: baştan sona
 
 <CodeWalk file="paligemma.py" symbol="PaliGemmaForConditionalGeneration.forward" notes={[
-  { match: "assert torch.all(attention_mask == 1)", title: "padding yok", text: <>Tek örnek, sol tarafta görüntü, sağda prompt. Padding olsaydı attention'ın pad konumlarını yok sayması gerekirdi. Bu da aşama 5'in maske işi. Şimdilik açıkça reddediliyor: sessiz yanlış yerine net hata.</> },
+  { match: "assert torch.all(attention_mask == 1)", title: "padding yok", text: <>Tek örnek, sol tarafta görüntü, sağda prompt. Padding olsaydı attention'ın pad konumlarını yok sayması gerekirdi. Bu da attention maskesinin işi. Şimdilik açıkça reddediliyor: sessiz yanlış yerine net hata.</> },
   { match: "inputs_embeds = self.language_model.get_input_embeddings()(input_ids)", title: "1. metin embedding'leri", text: <><S s="B, T" /> → <S s="B, T, 2048" ax="B,T,D" />. &lt;image&gt; konumları da tablodan geçiyor, sonra üzerine yazılacak.</> },
   { match: "image_features = self.vision_tower(pixel_values.to(inputs_embeds.dtype))", title: "2. görüntü", text: <>pixel_values float32 gelir. Model bf16'daysa önce çevriliyor, yoksa Conv2d dtype uyuşmazlığı hatası verir. <S s="B, 3, 224, 224" ax="B,C,,," /> → <S s="B, 256, 1152" ax="B,T,D" />.</> },
   { match: "image_features = self.multi_modal_projector(image_features)", title: "3. projektör", text: <><S s="B, 256, 1152" ax="B,T,D" /> → <S s="B, 256, 2048" ax="B,T,D" />.</> },
@@ -93,7 +93,7 @@ Gemma'nın gördüğü dizinin her konumu iki kaynaktan birinden geliyor: metin 
 
 ## Eksik olan: token'lar birbirini henüz görmüyor
 
-Şu anki modelde her token'ın yolculuğu tamamen **kendi içinde**. Embedding, norm'lar, MLP ve lm_head token'ları ayrı ayrı işliyor ve attention'ın yerinde Identity var. Yani metin token'ları görüntüyü hiç görmüyor. Görüntüyü görmenin tek yolu attention. Aşama 5'te üç parça gelecek:
+Şu anki modelde her token'ın yolculuğu tamamen **kendi içinde**. Embedding, norm'lar, MLP ve lm_head token'ları ayrı ayrı işliyor ve attention'ın yerinde Identity var. Yani metin token'ları görüntüyü hiç görmüyor. Görüntüyü görmenin tek yolu attention. Sırada üç parça var:
 
 | Parça | Ne yapıyor | Dikkat |
 |---|---|---|
@@ -109,6 +109,6 @@ Gemma'nın gördüğü dizinin her konumu iki kaynaktan birinden geliyor: metin 
 PaliGemma makalesi (§5.2): görsel token'ların prompt'u, yani "ne sorulduğunu" görebilmesi, görüntü temsilini göreve göre şekillendiriyor. Tam causal maskede ilk görsel token hiçbir şey göremez, son görsel token ise prompt'u göremez. Prefix'in kendisi zaten verili, gelecekten bilgi sızdırma riski yok. Causal kısıt sadece modelin <i>üreteceği</i> kısım için gerekli.
 </Callout>
 
-<Impact from="paligemma.py: assert attention_mask == 1" to="aşama 5–6: attention_mask, position_ids">
-Aşama 5'te <code>forward</code> imzasına maske ve konumlar girecek, <code>GemmaModel.forward</code> bunları her katmana geçirecek. Bu assert ilk kaldırılacak satırlardan biri.
+<Impact from="paligemma.py: assert attention_mask == 1" to="sırada: attention_mask, position_ids">
+Attention eklenince <code>forward</code> imzasına maske ve konumlar girecek, <code>GemmaModel.forward</code> bunları her katmana geçirecek. Bu assert ilk kaldırılacak satırlardan biri.
 </Impact>

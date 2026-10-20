@@ -29,7 +29,7 @@ import { Link } from "react-router-dom";
 
 PaliGemma tespit (detection) sonucunu da metin olarak yazıyor. Sözlükte 1024 tane `<locXXXX>` token'ı var. Her biri görüntü kenarının 1/1024'lük bir dilimi.
 
-<Fig wide caption={<><b>Bir kutu çiz.</b> Model bu kutuyu "y_min x_min y_max x_max etiket" sırasıyla dört token yazarak ifade ediyor. Aşama 6'da modelin kendi kutularını bu şekilde çözeceğiz.</>}>
+<Fig wide caption={<><b>Bir kutu çiz.</b> Model bu kutuyu "y_min x_min y_max x_max etiket" sırasıyla dört token yazarak ifade ediyor. Model uçtan uca çalışınca onun kendi kutularını bu şekilde çözeceğiz.</>}>
 <LocBoxTool />
 </Fig>
 
@@ -53,5 +53,5 @@ PaliGemma makalesi (§5.5, Connector design) linear projeksiyon ile MLP bağlay�
 <code>&lt;image&gt;</code> (id 257152) sözlükte gerçek bir token ve tabloda bir satırı var. Önce bütün <code>input_ids</code> tablodan geçiyor, &lt;image&gt;'ın satırı da dahil. Sonra <code>_merge_input_ids_with_image_features</code>'da <code>masked_scatter</code> o konumların üzerine projektör çıktısını (÷√d ile) sırayla yazıyor. &lt;image&gt;'ın tablodaki satırı hiç kullanılmamış oluyor (<Link to="/hepsi">Bölüm 6</Link>'daki animasyon).
 </ConceptQ>
 <ConceptQ n={3} q="Prompt'un sonuna \n eklenmesinin rolü ne?">
-PaliGemma bir prefix-LM: prefix (görüntü + prompt) tam attention, suffix (cevap) causal. <code>\n</code> eğitimde prefix'in bittiği yeri işaretliyordu. Model <code>\n</code>'den sonraki token'ın cevabın ilk token'ı olduğunu öğrendi. Olmazsa model prompt'u devam ettirmeye çalışabilir. Bu ayraç aşama 6'daki prefix maskesinin sınırını da belirliyor.
+PaliGemma bir prefix-LM: prefix (görüntü + prompt) tam attention, suffix (cevap) causal. <code>\n</code> eğitimde prefix'in bittiği yeri işaretliyordu. Model <code>\n</code>'den sonraki token'ın cevabın ilk token'ı olduğunu öğrendi. Olmazsa model prompt'u devam ettirmeye çalışabilir. Bu ayraç prefix maskesinin sınırını da belirliyor.
 </ConceptQ>

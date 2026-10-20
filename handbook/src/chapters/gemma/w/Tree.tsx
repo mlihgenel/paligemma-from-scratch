@@ -12,7 +12,7 @@ const WHAT: Record<string, [string, string?]> = {
   Embedding: ["Token id → tablo satırı (lookup). Hesap değil, indeksleme.", "/gemma/sqrt-d"],
   ModuleList: ["Alt modülleri kaydeden liste. Kendisi forward yapmaz.", "/gemma/model"],
   GemmaDecoderLayer: ["Pre-norm katman: x + attn(norm(x)), sonra x + mlp(norm(x)).", "/gemma/katman"],
-  Identity: ["Şimdilik attention yerine: girdiyi aynen döndürür. Aşama 5'te GemmaAttention gelecek.", "/gemma/katman"],
+  Identity: ["Şimdilik attention yerine: girdiyi aynen döndürür. Sonra yerine GemmaAttention gelecek.", "/gemma/katman"],
   GemmaMLP: ["GeGLU: down(gelu_tanh(gate(x)) ⊙ up(x)). Token'lar arası karışma yok.", "/gemma/geglu"],
   GemmaRMSNorm: ["x / rms(x) · (1 + w). Ortalama çıkarılmaz, bias yok, hesap float32'de.", "/gemma/rmsnorm"],
   Linear: ["y = x Wᵀ (+ b). Son eksen dönüşür, diğer eksenler aynen kalır."],
@@ -135,13 +135,13 @@ export function ParamShare() {
     <div style={{ fontFamily: "var(--sans)" }}>
       <div style={{ display: "flex", height: 34, borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
         {items.map((i) => <div key={i.label} title={`${i.label}: ${fmtCount(i.value)}`} style={{ width: `${(i.value / (total + attn)) * 100}%`, background: i.color, minWidth: i.value ? 2 : 0 }} />)}
-        <div title={`aşama 5 attention: ${fmtCount(attn)}`} style={{ width: `${(attn / (total + attn)) * 100}%`, background: "repeating-linear-gradient(45deg, var(--bg-sunk), var(--bg-sunk) 4px, var(--border-strong) 4px, var(--border-strong) 8px)" }} />
+        <div title={`attention (henüz yok): ${fmtCount(attn)}`} style={{ width: `${(attn / (total + attn)) * 100}%`, background: "repeating-linear-gradient(45deg, var(--bg-sunk), var(--bg-sunk) 4px, var(--border-strong) 4px, var(--border-strong) 8px)" }} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: "6px 16px", marginTop: 10, fontSize: 13.5 }}>
         {items.map((i) => (
           <div key={i.label}><span style={{ color: i.color }}>■</span> {i.label}: <b className="mono">{fmtCount(i.value)}</b> <span className="muted">({((i.value / total) * 100).toFixed(1)}%)</span></div>
         ))}
-        <div><span className="muted">▨</span> attention (aşama 5): <b className="mono">{fmtCount(attn)}</b> <span className="muted">henüz yok</span></div>
+        <div><span className="muted">▨</span> attention (henüz yok): <b className="mono">{fmtCount(attn)}</b> <span className="muted">henüz yok</span></div>
       </div>
       <div className="small muted" style={{ marginTop: 8 }}>
         Şu an toplam <b className="mono">{fmtCount(total)}</b> tekil parametre (<code>model.parameters()</code> bağlı tensörü bir kez sayar).

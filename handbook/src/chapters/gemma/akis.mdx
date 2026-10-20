@@ -52,7 +52,7 @@ Bu satırın iki önemli sonucu var.
 <CodeWalk file="gemma.py" symbol="GemmaDecoderLayer.forward" notes={[
   { match: "residual = hidden_states", title: "Akıştan kopya", text: <>Akışın o anki değeri saklanıyor. <b>Norm'dan önce</b> saklanması kritik: residual norm'lu kopyadan alınırsa akışın kendisi normalize edilmiş olur (aşağıdaki "Ne bozulur?").</> },
   { match: "self.input_layernorm(hidden_states)", title: "Dal: norm", text: <>Bu satırdan sonra <code>hidden_states</code> artık akışın kendisi değil, normalize edilmiş bir kopya. Akış <code>residual</code> değişkeninde bekliyor. Şekil değişmiyor: <S s="B, T, D" />.</> },
-  { match: "self.self_attn(hidden_states)", title: "Dal: attention (şimdilik Identity)", text: <>Aşama 5'te token'lar arası bilgi buradan geçecek. Şu an <code>nn.Identity</code>, kopyayı aynen döndürüyor. Yani bu blok şu an <code>h + norm(h)</code> hesaplıyor. Bu sayfanın deneylerinde attention yerine <code>check_gemma.py</code>'deki gibi rastgele bir linear katman var.</> },
+  { match: "self.self_attn(hidden_states)", title: "Dal: attention (şimdilik Identity)", text: <>Attention yazılınca token'lar arası bilgi buradan geçecek. Şu an <code>nn.Identity</code>, kopyayı aynen döndürüyor. Yani bu blok şu an <code>h + norm(h)</code> hesaplıyor. Bu sayfanın deneylerinde attention yerine <code>check_gemma.py</code>'deki gibi rastgele bir linear katman var.</> },
   { match: "hidden_states = residual + hidden_states", title: "Yazma: akışa ekle", text: <>Otoyolun ⊕ noktası. Dalın çıktısı akışa toplanıyor. İki tensör de <S s="B, T, D" />, eleman eleman toplama.</> },
   { match: "self.post_attention_layernorm(hidden_states)", title: "İkinci dal: norm", text: <>Aynı desen, bu kez MLP için. Adı yanıltıcı: "post attention" denmesinin nedeni attention'dan <i>sonra</i> gelmesi, ama aslında MLP'nin <i>girişindeki</i> norm. Bkz. <Link to="/gemma/katman">5.5</Link>.</> },
   { match: "hidden_states = self.mlp(hidden_states)", title: "Dal: MLP", text: <>GeGLU. Her token ayrı işleniyor. Bkz. <Link to="/gemma/geglu">5.4</Link>.</> },
@@ -101,7 +101,7 @@ Pre-norm'da çıkış, girişin <i>kendisini</i> içeriyor: <span className="mon
 <code>residual + Identity(input_layernorm(h))</code> = <b>h + norm(h)</b>. Yani attention bloğu şu an akışa kendi normalize edilmiş kopyasını ekliyor: anlamsız ama zararsız bir yer tutucu. <code>check_gemma.py</code> bu yüzden testte iki tarafa da aynı rastgele <code>StubAttention</code>'ı koyuyor. Yoksa HF'nin gerçek attention'ıyla senin Identity'n karşılaştırılırdı.
 </Predict>
 
-<Impact from="gemma.py: residual = hidden_states" to="Gemma 2: sandwich norm (aşama 8)">
+<Impact from="gemma.py: residual = hidden_states" to="Gemma 2: sandwich norm">
 Gemma 2 her dalın <i>çıktısına</i> da bir norm ekliyor: <span className="mono">h + norm₂(f(norm₁(h)))</span>. Akışın kendisi yine normalize edilmiyor, otoyol fikri aynı kalıyor. Değişen tek şey dalın akışa ne kadar büyük bir güncelleme yazdığının da sınırlanması.
 </Impact>
 

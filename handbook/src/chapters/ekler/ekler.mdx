@@ -21,8 +21,8 @@ PaliGemma 1, 224 px, "caption tr" (T = 260), B = 1.
 | Birleşmiş embedding | `_merge_input_ids_with_image_features` | <S s="1, 260, 2048" ax="B,T,D" /> |
 | RMSNorm ara değeri | `x.pow(2).mean(-1, keepdim=True)` | <S s="1, 260, 1" ax="B,T," /> |
 | GeGLU ara | `gate_proj`, `up_proj` | <S s="1, 260, 16384" ax="B,T,I" /> |
-| Gemma q (aşama 5) | `q_proj` | <S s="1, 8, 260, 256" ax="B,H,T,hd" /> |
-| Gemma k, v (aşama 5) | `k_proj`, `v_proj` | <S s="1, 1, 260, 256" ax="B,H,T,hd" /> |
+| Gemma q (attention) | `q_proj` | <S s="1, 8, 260, 256" ax="B,H,T,hd" /> |
+| Gemma k, v (attention) | `k_proj`, `v_proj` | <S s="1, 1, 260, 256" ax="B,H,T,hd" /> |
 | Logit'ler | `lm_head` | <S s="1, 260, 257216" ax="B,T,V" /> |
 
 ## Config karşılaştırması
@@ -42,7 +42,7 @@ PaliGemma 1, 224 px, "caption tr" (T = 260), B = 1.
 | softcap | — | — | — | attention 50, final 30 |
 | sözlük | — | — | 257216 | 257216 |
 
-Gemma 2 sütunu makale ve ROADMAP'ten. Aşama 8'de `paligemma2-3b-mix-224`'ün `config.json`'uyla doğrulanacak.
+Gemma 2 sütunu makale ve ROADMAP'ten. Gemma 2'ye geçerken `paligemma2-3b-mix-224`'ün `config.json`'uyla doğrulanacak.
 
 ## dtype ve eps tuzakları
 

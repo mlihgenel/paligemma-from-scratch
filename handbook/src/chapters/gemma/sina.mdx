@@ -15,7 +15,7 @@ Ortalamayı çıkarma (merkezleme) ve bias'ı atıyor. Sadece ölçekleme, yani 
 Üçüncü matris kapı (gate). Ara katmanı iki doğrusal projeksiyonun çarpımı yapıyor: <span className="mono">gelu(W_g x) ⊙ (W_u x)</span>. Klasik MLP 2·d·4d = 8d² parametre. GLU 3·d·I. Eşitlemek için I = 8d/3 (Llama). Gemma 1 bu kuralı uygulamıyor: I = 8d = 16384, klasik MLP'nin 3 katı. 18 katmanda 1.81 B, modelin üçte ikisi (<Link to="/gemma/geglu">5.4</Link>).
 </ConceptQ>
 <ConceptQ n={3} q="Weight tying 256k × 2048'lik bir vocab'da kaç parametre kazandırır?">
-257216 × 2048 = <b>526.778.368</b> ≈ 527 M parametre. bf16'da ≈ 1 GB, float32'de ≈ 2 GB. Gerçek checkpoint'te lm_head anahtarı hiç yok. Senin <code>state_dict</code>'inde ise var, aşama 6'da yüklerken buna dikkat (<Link to="/gemma/tying">5.7</Link>).
+257216 × 2048 = <b>526.778.368</b> ≈ 527 M parametre. bf16'da ≈ 1 GB, float32'de ≈ 2 GB. Gerçek checkpoint'te lm_head anahtarı hiç yok. Senin <code>state_dict</code>'inde ise var, gerçek ağırlıkları yüklerken buna dikkat (<Link to="/gemma/tying">5.7</Link>).
 </ConceptQ>
 
 ## Bu satır olmasa ne bozulur?
@@ -24,12 +24,12 @@ Ortalamayı çıkarma (merkezleme) ve bias'ı atıyor. Sadece ölçekleme, yani 
 <LineCards />
 </Fig>
 
-## Aşama 5 ve sonrası için notlar
+## İleriye notlar
 
 Kitabı hazırlarken gerçek veriden ve HF kaynağından çıkan, ileride işine yarayacak notlar:
 
 <Callout kind="dikkat" title="1. position_ids PaliGemma'da 1'den başlıyor">
-Kurulu HF <code>modeling_paligemma.py</code>'de: <code>position_ids = position_ids.unsqueeze(0) + 1  # Paligemma positions are 1-indexed</code>. RoPE'u yazarken (aşama 5) ve HF ile karşılaştırırken konumları 0'dan değil 1'den başlatman gerekecek.
+Kurulu HF <code>modeling_paligemma.py</code>'de: <code>position_ids = position_ids.unsqueeze(0) + 1  # Paligemma positions are 1-indexed</code>. RoPE'u yazarken ve HF ile karşılaştırırken konumları 0'dan değil 1'den başlatman gerekecek.
 </Callout>
 <Callout kind="dikkat" title="2. Checkpoint'te 72 attention anahtarı bekliyor">
 <code>layers.N.self_attn.{"{q,k,v,o}"}_proj.weight</code>, 18 katman. Adlar tam böyle olmalı. q_proj <S s="2048, 2048" ax="D,D" />, k/v_proj <S s="256, 2048" ax="hd,D" /> (1 KV head × 256), o_proj <S s="2048, 2048" ax="D,D" />. Bias yok.

@@ -17,7 +17,7 @@ import { Link } from "react-router-dom";
   { match: "def get_input_embeddings", title: "get_input_embeddings", text: <>PaliGemma'nın embedding tablosuna adla değil bu metotla erişmesi için. HF'nin standart arayüzü.</> },
   { match: "def forward(self, inputs_embeds", title: "girdi: id değil embedding", text: <>GemmaModel <code>input_ids</code> almıyor, hazır embedding alıyor. Çünkü görsel token'lar tablodan gelmiyor: PaliGemma önce tabloyu kullanıyor, sonra görsel özellikleri yerleştiriyor, sonra buraya veriyor.</> },
   { match: "normalizer = torch.tensor", title: "√d", text: <>Bkz. <Link to="/gemma/sqrt-d">5.2</Link>.</> },
-  { match: "hidden_states = decoder_layer(hidden_states)", title: "döngü", text: <>18 kez aynı şekil: <S s="B, T, 2048" ax="B,T,D" />. Aşama 5'te <code>decoder_layer(hidden_states, attention_mask, position_ids)</code> olacak.</> },
+  { match: "hidden_states = decoder_layer(hidden_states)", title: "döngü", text: <>18 kez aynı şekil: <S s="B, T, 2048" ax="B,T,D" />. Attention eklenince <code>decoder_layer(hidden_states, attention_mask, position_ids)</code> olacak.</> },
   { match: "hidden_states = self.norm(hidden_states)", title: "son norm", text: <>Çıktı lm_head'e gidiyor (GemmaForCausalLM'de).</> },
 ]} />
 
@@ -31,7 +31,7 @@ import { Link } from "react-router-dom";
 Düz listeyle yazılmış bir model çalışır ve doğru şekiller üretir. Ama <code>load_state_dict</code> 18 katmanın ağırlıklarını "beklenmeyen anahtar" diye reddeder (strict=True ise hata, değilse sessizce atlar). Katmanlar rastgele başlangıç ağırlıklarında kalır. <code>check_gemma.py</code>'nin ilk iş anahtar kümelerini karşılaştırmasının nedeni bu.
 </Callout>
 
-`nn.Sequential` parametreleri kaydediyor ama `forward`'ı `x → layer1(x) → layer2(...)` şeklinde, **tek argümanla** zincirliyor. Aşama 5'te her katmana `attention_mask` ve `position_ids` de geçmen gerekecek, bu yüzden açık bir `for` döngüsü lazım.
+`nn.Sequential` parametreleri kaydediyor ama `forward`'ı `x → layer1(x) → layer2(...)` şeklinde, **tek argümanla** zincirliyor. Attention eklenince her katmana `attention_mask` ve `position_ids` de geçmen gerekecek, bu yüzden açık bir `for` döngüsü lazım.
 
 ## Neden son bir norm?
 

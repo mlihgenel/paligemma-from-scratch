@@ -69,7 +69,7 @@ export function SandwichCompare() {
   const norm = "var(--ax-hd)";
   return (
     <div>
-      <Seg value={v} onChange={setV} options={[["g1", "Gemma 1 (senin kodun)"], ["g2", "Gemma 2 (aşama 8)"]]} />
+      <Seg value={v} onChange={setV} options={[["g1", "Gemma 1 (senin kodun)"], ["g2", "Gemma 2"]]} />
       <div className="grid2" style={{ marginTop: 12, gap: 24 }}>
         {(["attn", "mlp"] as const).map((b) => (
           <div key={b} style={{ display: "grid", gap: 4 }}>

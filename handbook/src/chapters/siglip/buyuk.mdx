@@ -44,5 +44,5 @@ Görsel token sayısı (görüntü kenarı / 14)². Attention her token'ı her t
 Softmax'ta bir çiftin olasılığı <span className="mono">e^s_ij / Σ_k e^s_ik</span>: payda satırdaki bütün örnekleri içeriyor. Bir örneğin skoru değişince bütün satırın olasılıkları değişiyor. Sigmoid'de her çift <span className="mono">σ(z_ij(t·s_ij + b))</span> ile kendi başına ikili sınıflandırılıyor (z = +1 doğru çift, −1 yanlış). Payda yok, toplam yok. Yukarıdaki matriste hover ile görebilirsin: 11 hücre ↔ 1 hücre.
 </ConceptQ>
 <ConceptQ n={3} q="224 px görüntü ve 14 px yama: kaç görsel token çıkar? 448 px'te kaç? Bu, Gemma'nın hesap maliyetini neden 4 kattan fazla artırır?">
-224/14 = 16 → 16² = <b>256</b> token. 448/14 = 32 → <b>1024</b> token. Token sayısı 4 kat. Gemma'daki doğrusal kısımlar (MLP, projeksiyonlar) ~4 kat büyüyor, ama attention skor matrisi T × T olduğu için ~16 kat büyüyor. Toplam maliyet 4'ten fazla, 16'dan az. KV cache'in bellek maliyeti de ~4 kat (aşama 7).
+224/14 = 16 → 16² = <b>256</b> token. 448/14 = 32 → <b>1024</b> token. Token sayısı 4 kat. Gemma'daki doğrusal kısımlar (MLP, projeksiyonlar) ~4 kat büyüyor, ama attention skor matrisi T × T olduğu için ~16 kat büyüyor. Toplam maliyet 4'ten fazla, 16'dan az. KV cache'in bellek maliyeti de ~4 kat.
 </ConceptQ>

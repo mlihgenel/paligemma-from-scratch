@@ -74,11 +74,11 @@ Klasik MLP'de her ara nöron <span className="mono">gelu(w·x)</span>: girdinin 
 </Fig>
 
 <Predict q="MLP her token'ı ayrı işliyorsa 260 token'lık diziyi tek seferde vermekle 260 kez tek token vermek arasında fark var mı?">
-Matematiksel olarak <b>yok</b>. Oyuncak modelde ölçülen max fark ~1e-6, sadece float toplama sırasından gelen gürültü. Token'lar arasında bilgi taşıyan tek yer attention (aşama 5). MLP bilgiyi token'ın kendi içinde dönüştürüyor. Pratikte toplu vermek çok daha hızlı, çünkü tek bir büyük matmul oluyor.
+Matematiksel olarak <b>yok</b>. Oyuncak modelde ölçülen max fark ~1e-6, sadece float toplama sırasından gelen gürültü. Token'lar arasında bilgi taşıyan tek yer attention. MLP bilgiyi token'ın kendi içinde dönüştürüyor. Pratikte toplu vermek çok daha hızlı, çünkü tek bir büyük matmul oluyor.
 </Predict>
 
 <Impact from="gemma.py: GemmaMLP" to="Gemma 2: aynı sınıf, I = 9216">
-Gemma 2 2B'de MLP aynı (gate/up/down, gelu_tanh). Sadece config değişiyor: hidden 2304, intermediate 9216 (= 4d). Bu sınıfa aşama 8'de dokunmana gerek yok.
+Gemma 2 2B'de MLP aynı (gate/up/down, gelu_tanh). Sadece config değişiyor: hidden 2304, intermediate 9216 (= 4d). Gemma 2'ye geçerken bu sınıfa dokunmana gerek yok.
 </Impact>
 
 <ManimVideo scene="GeGLUGating" caption="Bir token'ın vektörü iki yola ayrılıyor; kapı ⊙ değer; daralma." />

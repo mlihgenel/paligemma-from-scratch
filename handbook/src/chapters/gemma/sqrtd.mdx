@@ -50,7 +50,7 @@ Bazı anlatımlarda "embedding'ler küçük başlatıldığı için √d ile ça
 </Callout>
 
 <Callout kind="bulgu" title="<loc> ve <seg> token'ları neden bu kadar küçük?">
-256000 ve sonrasındaki id'ler (1024 <code>&lt;locXXXX&gt;</code> + 128 <code>&lt;segXXX&gt;</code>) Gemma'nın orijinal sözlüğünde yoktu, PaliGemma için eklendi. Normlarının ≈ 1 olması bu satırların ayrı bir başlangıçla ve daha kısa bir eğitimle geldiğini düşündürüyor. Kesin nedeni makale söylemiyor. Ama aşama 6'da kutu çıktıları üretirken bu token'ların logit'lerine bakmak ilginç olacak.
+256000 ve sonrasındaki id'ler (1024 <code>&lt;locXXXX&gt;</code> + 128 <code>&lt;segXXX&gt;</code>) Gemma'nın orijinal sözlüğünde yoktu, PaliGemma için eklendi. Normlarının ≈ 1 olması bu satırların ayrı bir başlangıçla ve daha kısa bir eğitimle geldiğini düşündürüyor. Kesin nedeni makale söylemiyor. Ama model kutu çıktıları üretirken bu token'ların logit'lerine bakmak ilginç olacak.
 </Callout>
 
 ## Neden çarpıyoruz? Ölçek dengesi
@@ -79,7 +79,7 @@ SigLIP + projektör çıktısı zaten akışın beklediği ölçekte eğitildi. 
 
 
 <Impact from="paligemma.py: ÷√d  +  gemma.py: ×√d" to="HF 5.x: sadece metin ×√d (tablonun içinde)">
-Kurulu <code>transformers</code> 5.x'te ölçek <code>GemmaTextScaledWordEmbedding</code> içinde, yani sadece tablodan gelen <b>metin</b> embedding'lerine uygulanıyor. Görsel özellikler hiç bölünmeden, olduğu gibi yerleşiyor. Matematiksel olarak senin yolunla aynı. Ama bf16'da gidiş-dönüş tam olmadığı için <b>aşama 6'da bf16 karşılaştırmasında görsel token'larda ~%0.5'lik farklar</b> çıkabilir. Bu bir hata değil, tolerans (<code>atol≈1e-2</code>) bunu kapsamalı. float32'de birebir eşleşmeli.
+Kurulu <code>transformers</code> 5.x'te ölçek <code>GemmaTextScaledWordEmbedding</code> içinde, yani sadece tablodan gelen <b>metin</b> embedding'lerine uygulanıyor. Görsel özellikler hiç bölünmeden, olduğu gibi yerleşiyor. Matematiksel olarak senin yolunla aynı. Ama bf16'da gidiş-dönüş tam olmadığı için <b>uçtan uca bf16 karşılaştırmasında görsel token'larda ~%0.5'lik farklar</b> çıkabilir. Bu bir hata değil, tolerans (<code>atol≈1e-2</code>) bunu kapsamalı. float32'de birebir eşleşmeli.
 </Impact>
 
 ## bf16: neden 45.25?

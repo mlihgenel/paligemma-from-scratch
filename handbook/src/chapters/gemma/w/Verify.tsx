@@ -52,7 +52,7 @@ export function KeyMatcher() {
           );
         })}
       </div>
-      <div className="small muted" style={{ marginTop: 6 }}>sütunlar: senin modelin · checkpoint. Gri: attention (aşama 5'te gelecek). Turuncu: lm_head (tying, 5.7). Kırmızı: gerçek uyumsuzluk.</div>
+      <div className="small muted" style={{ marginTop: 6 }}>sütunlar: senin modelin · checkpoint. Gri: attention (henüz yazılmadı). Turuncu: lm_head (tying, 5.7). Kırmızı: gerçek uyumsuzluk.</div>
     </div>
   );
 }

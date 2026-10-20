@@ -38,11 +38,11 @@ export const STAGES: StageDef[] = [
   { key: "scale", title: "× √2048", z: -7.6, shape: (d, T) => [1, T, d.D], ax: "B,T,D", dtype: "float32", cls: "GemmaModel.forward", code: ["gemma.py", "hidden_states = hidden_states * normalizer"], to: "/gemma/sqrt-d",
     note: <>Bütün dizi 45.25 ile çarpılıyor. Görsel token'lar için net etki ×1, metin token'ları 45 kat büyüyor.</> },
   { key: "dec", title: "Gemma decoder ×18", z: -10.6, shape: (d, T) => [1, T, d.D], ax: "B,T,D", dtype: "float32", cls: "GemmaDecoderLayer", code: ["gemma.py", "hidden_states = decoder_layer(hidden_states)"], to: "/gemma/akis",
-    note: <>Her katman akışa iki güncelleme ekliyor (attn + mlp). Attention şimdilik Identity, aşama 5'te token'lar birbirini görecek.</> },
+    note: <>Her katman akışa iki güncelleme ekliyor (attn + mlp). Attention şimdilik Identity, attention yazılınca token'lar birbirini görecek.</> },
   { key: "norm", title: "Son RMSNorm", z: -13, shape: (d, T) => [1, T, d.D], ax: "B,T,D", dtype: "float32", cls: "GemmaRMSNorm", code: ["gemma.py", "hidden_states = self.norm(hidden_states)"], to: "/gemma/rmsnorm",
     note: <>18 katman boyunca büyüyen akış, lm_head'den önce bir kez normalize ediliyor.</> },
   { key: "head", title: "lm_head → logit'ler", z: -15, shape: (d, T) => [1, T, d.Vc], ax: "B,T,V", dtype: "float32", cls: "nn.Linear (= embed_tokens.weight)", code: ["gemma.py", "logits = self.lm_head(hidden_states)"], to: "/gemma/tying",
-    note: <>Her konum için sözlükteki 257216 token'a bir skor. Üretimde sadece <b>son</b> konumun skorları kullanılıyor: argmax → bir sonraki token (aşama 6).</> },
+    note: <>Her konum için sözlükteki 257216 token'a bir skor. Üretimde sadece <b>son</b> konumun skorları kullanılıyor: argmax → bir sonraki token.</> },
 ];
 
 export const idx = (k: string) => STAGES.findIndex((s) => s.key === k);
