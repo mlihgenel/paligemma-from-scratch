@@ -74,7 +74,7 @@ Conv2d'nin çıktısı <S s="1, 1152, 16, 16" ax="B,D,," />: 1152 kanal, her bir
   { match: "embeddings = embeddings + self.position_embedding(self.position_ids)", title: "4", text: <><S s="1, 256, 1152" ax="B,T,D" /> + <S s="1, 256, 1152" ax="B,T,D" />. Eleman eleman toplama.</> },
 ]} />
 
-## Kavram soruları (aşama 1)
+## Kavram soruları
 
 <ConceptQ n={1} q="Conv2d çıktısı [B, 768, 14, 14]. Transformer'a giren tensör neden [B, 196, 768] olmalı?">
 Transformer bir <b>dizi</b> işliyor: <S s="B, T, D" />, yani her token bir satır ve her satır D sayı. Attention token'lar (T ekseni) arasında karışıyor, Linear katmanlar son ekseni (D) dönüştürüyor. Conv çıktısında "token" henüz iki uzamsal eksene (14 × 14) dağılmış ve kanal ekseni ortada duruyor. flatten iki uzamsal ekseni tek bir T = 196 eksenine indiriyor, transpose da D'yi sona alıyor.

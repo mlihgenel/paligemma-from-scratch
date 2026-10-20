@@ -71,7 +71,7 @@ function Toc({ current, onClose }: { current: Page; onClose: () => void }) {
             {PAGES.filter((p) => p.chapter === c).map((p) => (
               p.Component ? (
                 <Link key={p.path} to={p.path} onClick={onClose} className={"item" + (p === current ? " active" : "")}>
-                  <span className="n">{p.num}</span><span>{p.title}</span><span className="soon">{p.stage ?? ""}</span>
+                  <span className="n">{p.num}</span><span>{p.title}</span><span />
                 </Link>
               ) : (
                 <span key={p.path} className="item disabled" style={{ display: "grid", gridTemplateColumns: "44px 1fr auto", gap: 8, padding: "7px 0", color: "var(--fg-faint)" }}>
@@ -105,7 +105,7 @@ function PageView({ page }: { page: Page }) {
         {page.num && (
           <div className="page-head">
             <div className="num">{page.num}</div>
-            <div className="kicker">{page.chapter}{page.stage ? ` · ${page.stage}` : ""}</div>
+            <div className="kicker">{page.chapter}</div>
           </div>
         )}
         <article className="prose" style={{ ["--chap" as any]: page.num ? `"${page.num}."` : '""' }}>

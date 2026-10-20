@@ -67,7 +67,7 @@ Multi-head attention'ı anlamak için tensör şekillerini izlemek yetiyor. Aşa
 <SiglipParams />
 </Fig>
 
-## Kavram soruları (aşama 2)
+## Kavram soruları
 
 <ConceptQ n={1} q="Pre-norm (LN residual'dan önce) ile post-norm farkı ne? SigLIP hangisini kullanıyor? Sonda neden ayrıca bir post_layernorm var?">
 Post-norm: <span className="mono">x = LN(x + f(x))</span>. Pre-norm: <span className="mono">x = x + f(LN(x))</span>. SigLIP (ve Gemma) pre-norm kullanıyor: akış hiç normalize edilmiyor ve kimlik yolu kesintisiz kalıyor. Bu, derin modellerde gradyanı korur (<Link to="/gemma/akis">5.1</Link>). Bedeli şu: son katmanın çıktısı normalize edilmemiş, büyümüş bir akış (yukarıdaki grafik). <code>post_layernorm</code> bunu tek seferde normalize ediyor.

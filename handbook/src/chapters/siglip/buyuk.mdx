@@ -35,7 +35,7 @@ Görsel token sayısı (görüntü kenarı / 14)². Attention her token'ı her t
 <ResolutionCost />
 </Fig>
 
-## Kavram soruları (aşama 0)
+## Kavram soruları
 
 <ConceptQ n={1} q="PaliGemma eğitim sırasında SigLIP kaybını hiç kullanmıyor. Öyleyse neden kontrastif olarak önceden eğitilmiş bir görüntü kodlayıcı seçiliyor?">
 Çünkü kontrastif ön eğitim, görüntü temsilini dil uzayıyla hizalıyor: bir yamanın vektörü "kedi kulağı" gibi kavramlarla metinsel olarak ilişkilendirilebilir yönler taşıyor. Sınıflandırma ile eğitilmiş bir kodlayıcı (ör. ImageNet) sadece 1000 sınıfı ayırmayı öğrenir. Dil modeline köprü kurmak için çok daha zengin, açık sözlüklü bir temsil gerekiyor. PaliGemma makalesi (§3.1) SigLIP So400m'i bu yüzden seçiyor.

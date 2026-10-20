@@ -4,9 +4,9 @@ import { Link } from "react-router-dom";
 
 # Kendini sına
 
-<p className="lead">Aşama 4'ün kavram soruları ve gemma.py'nin her anlamlı satırı için "bu olmasa ne bozulur?" kartları. Cevabı açmadan önce kendin söyle.</p>
+<p className="lead">Bu bölümün kavram soruları ve gemma.py'nin her anlamlı satırı için "bu olmasa ne bozulur?" kartları. Cevabı açmadan önce kendin söyle.</p>
 
-## ROADMAP kavram soruları
+## Kavram soruları
 
 <ConceptQ n={1} q="RMSNorm LayerNorm'dan neyi çıkarıyor? Neden yine de işe yarıyor?">
 Ortalamayı çıkarma (merkezleme) ve bias'ı atıyor. Sadece ölçekleme, yani RMS'e bölme kalıyor. Zhang ve Sennrich (2019) eğitimi kararlı tutan şeyin büyük ölçüde ölçek normalizasyonu olduğunu gösterdi: girdiyi yeniden ölçeklemek çıktıyı değiştirmiyor (<Link to="/gemma/rmsnorm">5.3</Link> laboratuvarı). Daha ucuz ve kalite neredeyse aynı. Geometrik olarak: LayerNorm noktaları bir düzleme izdüşürüp çembere, RMSNorm doğrudan küreye taşıyor.
