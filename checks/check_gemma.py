@@ -3,8 +3,9 @@
 Parçalar küçükten büyüğe test edilir. src/gemma.py'de henüz yazılmamış sınıflar atlanır,
 yani her yeni sınıfı yazdıkça script'i yeniden çalıştırabilirsin:
 
-    GemmaRMSNorm  -> HF GemmaRMSNorm (float32 ve bfloat16 girdiyle)
-    GemmaMLP      -> HF GemmaMLP
+    GemmaRMSNorm       -> HF GemmaRMSNorm (float32 ve bfloat16 girdiyle)
+    GemmaMLP           -> HF GemmaMLP
+    GemmaDecoderLayer  -> HF GemmaDecoderLayer (attention yerine iki tarafta da aynı geçici modül)
 
 Çalıştır (proje kökünden):
     .venv/bin/python checks/check_gemma.py
@@ -18,6 +19,8 @@ from pathlib import Path
 
 import torch
 from transformers import GemmaConfig as HFGemmaConfig
+from torch import nn
+from transformers.models.gemma.modeling_gemma import GemmaDecoderLayer as HFGemmaDecoderLayer
 from transformers.models.gemma.modeling_gemma import GemmaMLP as HFGemmaMLP
 from transformers.models.gemma.modeling_gemma import GemmaRMSNorm as HFGemmaRMSNorm
 
@@ -100,9 +103,55 @@ def check_mlp():
         return compare("GemmaMLP", ours(x), hf(x))
 
 
+class StubAttention(nn.Module):
+    def __init__(self, hidden_size, hf_style):
+        super().__init__()
+        self.proj = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.hf_style = hf_style
+
+    def forward(self, hidden_states, **kwargs):
+        out = self.proj(hidden_states)
+        return (out, None) if self.hf_style else out
+
+
+def check_decoder_layer():
+    hf_config = HFGemmaConfig(**SMALL, hidden_act="gelu_pytorch_tanh")
+    hf = HFGemmaDecoderLayer(hf_config, layer_idx=0).eval()
+    ours = gemma.GemmaDecoderLayer(gemma.GemmaConfig(**SMALL), layer_idx=0).eval()
+
+    # Stub'ı self_attn adına koyuyoruz. Bizim katmanda attention başka bir adla duruyorsa stub hiç
+    # çağrılmaz ve sebebi belirsiz bir sayısal fark çıkar. Önce adı kontrol et
+    if not hasattr(ours, "self_attn"):
+        others = [n for n, _ in ours.named_children() if n not in ("mlp", "input_layernorm", "post_attention_layernorm")]
+        print(f"[HATA] GemmaDecoderLayer: 'self_attn' adında bir alt modül yok (bulunan: {others}). "
+              f"HF anahtarları layers.N.self_attn.q_proj.weight şeklinde")
+        return False
+
+    # Gerçek attention'ı iki tarafta da stub ile değiştir (bizimki gerçek GemmaAttention olsa bile,
+    # çünkü burada test edilen şey katmanın iskeleti. Attention'ın kendi testi aşama 5'te eklenecek)
+    hf.self_attn = StubAttention(SMALL["hidden_size"], hf_style=True)
+    ours.self_attn = StubAttention(SMALL["hidden_size"], hf_style=False)
+
+    # Norm ağırlıklarını rastgele yap. Sıfır kalırsa iki norm aynı davranır ve
+    # input_layernorm ile post_attention_layernorm'u karıştıran bir kod da testi geçer
+    with torch.no_grad():
+        hf.input_layernorm.weight.normal_()
+        hf.post_attention_layernorm.weight.normal_()
+    if not copy_weights("GemmaDecoderLayer", ours, hf):
+        return False
+
+    x = torch.randn(B, T, SMALL["hidden_size"]) * 40
+    with torch.no_grad():
+        return compare("GemmaDecoderLayer (stub attention)", ours(x), hf(x))
+
+
 def main():
     torch.manual_seed(0)
-    checks = [("GemmaRMSNorm", check_rmsnorm), ("GemmaMLP", check_mlp)]
+    checks = [
+        ("GemmaRMSNorm", check_rmsnorm),
+        ("GemmaMLP", check_mlp),
+        ("GemmaDecoderLayer", check_decoder_layer),
+    ]
 
     results = []
     for cls_name, fn in checks:

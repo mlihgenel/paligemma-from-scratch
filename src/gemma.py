@@ -60,6 +60,34 @@ class GemmaMLP(nn.Module):
         h = F.gelu(gate, approximate="tanh") * up   # [B, T, I], eleman eleman çarpım
         return self.down_proj(h)                    # [B, T, I] -> [B, T, D]
         
+# Pre-norm katman: x = x + attn(norm(x)), sonra x = x + mlp(norm(x)). Residual akışının kendisi hiç normalize edilmiyor
+class GemmaDecoderLayer(nn.Module): 
+    def __init__(self, config: GemmaConfig, layer_idx: int):
+        super().__init__() 
+        self.config = config 
+        self.hidden_size = config.hidden_size 
+        
+        self.self_attn = nn.Identity()
+        self.mlp = GemmaMLP(config)
+        self.input_layernorm = GemmaRMSNorm(self.hidden_size, eps=config.rms_norm_eps)
+        # Adına rağmen MLP'nin girişindeki norm (Llama'dan kalma ad). Gemma 2'de aynı ad attention çıktısına uygulanıyor
+        self.post_attention_layernorm = GemmaRMSNorm(self.hidden_size, eps=config.rms_norm_eps) 
+        
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor: 
+        # Attention bloğu. Residual norm'dan ÖNCE saklanıyor, yoksa akışın kendisi normalize edilmiş olur
+        residual = hidden_states                                  # [B, T, D]
+        hidden_states = self.input_layernorm(hidden_states)
+        hidden_states = self.self_attn(hidden_states)
+        hidden_states = residual + hidden_states 
+        
+        # MLP bloğu, aynı desen
+        residual = hidden_states 
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        hidden_states = residual + hidden_states 
+        
+        return hidden_states                                      # [B, T, D]
+        
 class GemmaModel(nn.Module):
     def __init__(self, config: GemmaConfig):
         super().__init__()
