@@ -1,0 +1,54 @@
+import { AxisLegend, Callout, Fig, S, Note } from "../components/ui";
+import { IntroDemo, ChapterList } from "./IntroDemo";
+import { Link } from "react-router-dom";
+
+<div className="eyebrow" style={{ marginTop: 8 }}>Aşama 0–4 · senin kodunla</div>
+
+# PaliGemma'nın içinden geçen bir el kitabı
+
+<p className="lead">Bir görüntü ve bir cümle, 2.75 milyar parametreden geçip bir cevaba dönüşüyor. Bu kitap o yolu <b>senin yazdığın kodla</b>, satır satır ve sayı sayı izliyor. Kod değişirse kitaptaki satırlar da değişir.</p>
+
+Videolarda her şey anlatılıyor ama hızlı geçiliyor. Bu kitap her satırda durup üç soruyu soruyor: **bu satır girdiye ne yapıyor**, **mimaride neyi etkiliyor** ve **olmasa ne bozulur**.
+
+## Okumanın üç yolu
+
+Kitabın figürleri üç şekilde konuşuyor. Hemen dene: soldaki sayıları yukarı-aşağı sürükle, sağdakilerin üstüne gel.
+
+<Fig wide caption={<><b>Küçük bir örnek.</b> Soldaki vektörü değiştirdikçe sağdaki normalize edilmiş hali canlı hesaplanıyor. Bir hücrenin üstüne gelince o sayının nasıl hesaplandığı görünüyor.</>}>
+<IntroDemo />
+</Fig>
+
+- **Kaydır.** Uzun anlatımlar scrollytelling biçiminde: metin kayarken sağdaki figür adım adım değişiyor. Figürün sağ üstündeki noktalar hangi adımda olduğunu gösteriyor.
+- **Üstüne gel.** Hemen her sayının, küpün ve yamanın üstüne gelince değeri ve nereden geldiği görünüyor.
+- **Sürükle.** Düzenlenebilir hücreleri yukarı-aşağı, noktaları düzlemde sürükleyebilirsin. 3D sahneleri döndürebilirsin, kaybolursan sağ üstteki "görünümü sıfırla" düğmesi çıkıyor.
+
+<Note label="Kod">Kod blokları <code>src/</code> klasöründen canlı okunuyor. <span style={{ color: "var(--accent)" }}>●</span> işaretli satırlara tıklayınca açıklama açılır.</Note>
+
+## Renk kodu: eksenler
+
+Her eksenin kitap boyunca tek bir rengi var. Örnek: <S s="B, T, D" /> ya da gerçek boyutlarla <S s="1, 260, 2048" ax="B,T,D" />.
+
+<Fig>
+<AxisLegend axes={[["B", "batch"], ["T", "dizi uzunluğu (token)"], ["D", "gizli boyut"], ["V", "sözlük"], ["I", "MLP ara boyutu"], ["H", "head"], ["hd", "head_dim"]]} />
+</Fig>
+
+## Sayılar nereden geliyor?
+
+Kitaptaki sayıların hiçbiri uydurma değil. Hepsi `handbook/export/` altındaki scriptlerle **senin modüllerin** çalıştırılarak üretildi:
+
+- **Gerçek ağırlık parçaları.** PaliGemma checkpoint'inden HTTP Range ile sadece gereken tensörler indirildi, toplam ~8 MB: 37 RMSNorm ağırlığı, 430 embedding satırı, SigLIP konum embedding'i ve yama filtreleri, projektör.
+- **Gerçek görüntüler.** Deneyindeki tabela fotoğrafları, senin `processing.py` ve `siglip.py`'n ile işlendi.
+- **Oyuncak Gemma.** Gerçek boyutlu Gemma 8 GB'a sığmadığı için hidden 256, 6 katmanlı bir kopya kullanıldı. Norm ağırlıkları gerçek, embedding dağılımı gerçek.
+- **Gerçek boyutlu şekiller.** Model `meta` cihazında (0 bayt) kuruldu ve gerçek bir forward çalıştırıldı.
+
+<Callout kind="not" title="Veriyi yenilemek">
+Kodunu değiştirdikten sonra proje kökünden: <code>.venv/bin/python handbook/export/export_gemma_toy.py</code> (diğer scriptler de aynı klasörde).
+</Callout>
+
+## Nereden başlamalı?
+
+Bütün resmi görmek için <Link to="/oyun-alani">Oyun alanı</Link>'ndan başla. Aşama 4'ün zorlayan konuları için doğrudan <Link to="/gemma">Bölüm 5</Link>'e git.
+
+<div className="wide" style={{ marginTop: 28 }}>
+<ChapterList />
+</div>
