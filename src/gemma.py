@@ -96,9 +96,30 @@ class GemmaModel(nn.Module):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=self.padding_idx)
+        # Düz liste parametreleri kaydetmez, Sequential ise aşama 5'te mask/position_ids geçirmeye izin vermez
+        self.layers = nn.ModuleList(
+            [GemmaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+        )
+        # Residual akışı katmanlar boyunca hiç normalize edilmiyor, lm_head'den önce son bir kez
+        self.norm = GemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def get_input_embeddings(self) -> nn.Embedding:
         return self.embed_tokens
+
+    def forward(self, inputs_embeds: torch.Tensor) -> torch.Tensor:   # [B, T, D] -> [B, T, D]
+        hidden_states = inputs_embeds
+        # Embedding'leri otoyolun ölçeğine (eleman başına ~1) taşı. Görsel token'lar paligemma.py'de
+        # sqrt(d)'ye bölündüğü için onlar değişmeden kalıyor. Ölçek hidden_states'in dtype'ında:
+        # bf16'da sqrt(2048) = 45.25'e yuvarlanıyor, HF de öyle yapıyor
+        normalizer = torch.tensor(self.config.hidden_size ** 0.5, dtype=hidden_states.dtype)
+        hidden_states = hidden_states * normalizer
+
+        for decoder_layer in self.layers:
+            hidden_states = decoder_layer(hidden_states)          # aşama 5: + attention_mask, position_ids
+
+        hidden_states = self.norm(hidden_states)
+        return hidden_states
+
 
 class GemmaForCausalLM(nn.Module):
     def __init__(self, config: GemmaConfig):
