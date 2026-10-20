@@ -1,0 +1,80 @@
+import { Callout, ConceptQ, Fig, S, Note, Predict } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { ManimVideo, BreakIt } from "../../components/misc";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { AttentionScene, AttnMapExplorer, PcaCompare, SiglipParams } from "./Attn";
+import { SiglipGrowth } from "../gemma/w/Layer";
+import { Link } from "react-router-dom";
+
+# SigLIP encoder
+
+<p className="lead">27 aynı katman, her biri iki blok: önce yamalar birbirine bakıyor (attention), sonra her yama kendi içinde dönüşüyor (MLP). Şekil baştan sona <S s="1, 256, 1152" ax="B,T,D" />. Değişen şey her token'ın ne bildiği.</p>
+
+## Attention, tensör tensör
+
+Multi-head attention'ı anlamak için tensör şekillerini izlemek yetiyor. Aşağıda 4 token, 6 boyut ve 2 head'lik küçük bir örnek. Her küp gerçek bir sayı (rastgele ağırlıklarla, JS'de hesaplandı). Gerçek modelde 256 token, 1152 boyut ve 16 head var.
+
+<Scrolly label="SiglipAttention.forward" figure={(s) => <AttentionScene step={s} />}>
+<Step>**Girdi** <S s="T, D" ax="T,D" /> (batch'i atladık). LayerNorm'dan geçmiş yama vektörleri.</Step>
+<Step>**`q_proj`, `k_proj`, `v_proj`**: üç ayrı Linear (bias'lı), her biri <S s="T, D" ax="T,D" /> → <S s="T, D" ax="T,D" />. q "ne arıyorum", k "bende ne var", v "bulunursam ne veririm".</Step>
+<Step>**`view(B, T, H, hd).transpose(1, 2)`**: D = H × hd olarak bölünüyor ve head ekseni öne alınıyor: <S s="H, T, hd" ax="H,T,hd" />. Bellekte hiçbir sayı değişmedi. Her head artık kendi küçük T × hd matrisine sahip.</Step>
+<Step>**`q @ k.transpose(-2, -1) * scale`**: her head için <S s="T, T" ax="T,T" /> skor matrisi. (i, j) hücresi: token i'nin token j'ye ne kadar "uyduğu". √hd'ye bölmek skorların büyüklüğünü boyuttan bağımsız tutuyor.</Step>
+<Step>**`softmax(dim=-1)`**: her satır olasılığa dönüyor, satır toplamı 1. Maske yok: her yama her yamayı görebiliyor (Gemma'nın causal maskesinden farklı).</Step>
+<Step>**`wei @ v_states`**: her token, v'lerin ağırlıklı ortalamasını alıyor: <S s="H, T, hd" ax="H,T,hd" />. Bilgi token'lar arasında burada taşınıyor.</Step>
+<Step>**`transpose(1, 2).contiguous().reshape(B, T, C)`**: head'ler yeniden yan yana: <S s="T, D" ax="T,D" />. `contiguous()` gerekiyor, çünkü transpose sonrası bellek düzeni artık sıralı değil ve `view` bunu kabul etmiyor.</Step>
+<Step>**`out_proj`**: head'lerin bulduklarını karıştıran son Linear. Çıktı girdiyle aynı şekilde: residual'a eklenmeye hazır.</Step>
+</Scrolly>
+
+<ManimVideo scene="MultiHeadReshape" caption="view ve transpose ile head'lere bölme (20 sn)" />
+
+<CodeWalk file="siglip.py" symbol="SiglipAttention" notes={[
+  { match: "self.head_dim = config.hidden_size // config.num_attention_heads", title: "head_dim", text: <>1152 / 16 = 72. SigLIP'te hesaplanıyor. Gemma'da ise config'ten okunuyor (256), çünkü Gemma 2'de hidden/heads'e eşit değil.</> },
+  { match: "self.scale = self.head_dim ** -0.5", title: "ölçek", text: <>1/√72. Skorlar hd boyutlu iki vektörün çarpımı. Varyansları hd ile büyüyor ve bu ölçek onu 1'e çekiyor. Olmasa softmax çok sivri olur ve gradyan söner.</> },
+  { match: "k_states = k_states.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)", title: "head'lere böl", text: <><S s="B, T, D" /> → <S s="B, T, H, hd" ax="B,T,H,hd" /> → <S s="B, H, T, hd" ax="B,H,T,hd" />.</> },
+  { match: "wei = (q_states @ k_states.transpose(-2, -1)) * self.scale", title: "skorlar", text: <>Son iki eksen üzerinde matmul, ilk ikisi (B, H) batch gibi davranıyor: <S s="B, H, T, T" ax="B,H,T,T" />. 256² × 16 = 1 M sayı her katmanda.</> },
+  { match: "wei = F.softmax(wei, dim=-1)", title: "softmax", text: <>Son eksen boyunca: her sorgu satırı ayrı ayrı.</> },
+  { match: "out = wei @ v_states", title: "ağırlıklı ortalama", text: <><S s="B, H, T, hd" ax="B,H,T,hd" />.</> },
+  { match: "out = out.transpose(1, 2).contiguous()", title: "geri birleştir", text: <><code>reshape</code> zaten gerektiğinde kopyalıyor, <code>contiguous()</code> burada niyeti açık ediyor.</> },
+]} />
+
+## Gerçek attention haritaları
+
+<Fig wide caption={<><b>Bir yama nereye bakıyor?</b> Görüntüde bir yamanın üstüne gel (sorgu). Turuncu katman o yamanın attention dağılımı. Katman kaydırıcısıyla derinleş, head seçerek tek tek karşılaştır.</>}>
+<AttnMapExplorer />
+</Fig>
+
+## Katmanlar ne kazandırıyor?
+
+<Fig wide caption={<><b>Yama vektörlerinin ilk üç ana bileşeni, RGB olarak.</b> Embedding'den hemen sonra renkler pikselin kendi rengini izliyor. Son katmanda ise aynı nesnenin parçaları (tabelanın yazısı, zemini) benzer renk alıyor: temsil artık "neye ait" bilgisini taşıyor.</>}>
+<PcaCompare />
+</Fig>
+
+## Encoder katmanı ve akışın büyümesi
+
+<CodeWalk file="siglip.py" symbol="SiglipEncoderLayer" notes={[
+  { match: "self.layer_norm1 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)", title: "LayerNorm, eps = 1e-6", text: <>SigLIP LayerNorm kullanıyor (ortalama + varyans + γ, β). Gemma RMSNorm kullanıyor (<Link to="/gemma/rmsnorm">5.3</Link>). eps PyTorch varsayılanı (1e-5) değil, 1e-6.</> },
+  { match: "residual = hidden_states", title: "pre-norm", text: <>Gemma'daki desenin aynısı: residual norm'dan <b>önce</b> saklanıyor (<Link to="/gemma/akis">5.1</Link>).</> },
+  { match: "hidden_states = self.mlp(hidden_states)", title: "MLP", text: <>fc1 (1152 → 4304) → gelu_tanh → fc2. Kapısız, klasik MLP. GeGLU ile karşılaştırma: <Link to="/gemma/geglu">5.4</Link>.</> },
+]} />
+
+<Fig caption={<><b>Senin SigLIP'inden geçen bir tabela (siglip-base).</b> Akış katmanlar boyunca büyüyor. <code>post_layernorm</code> en sonda tek kez normalize ediyor.</>}>
+<SiglipGrowth />
+</Fig>
+
+## Parametreler nerede?
+
+<Fig caption={<><b>So400m.</b> Değerler senin sınıflarının gerçek config'le kurulmuş halinden.</>}>
+<SiglipParams />
+</Fig>
+
+## Kavram soruları (aşama 2)
+
+<ConceptQ n={1} q="Pre-norm (LN residual'dan önce) ile post-norm farkı ne? SigLIP hangisini kullanıyor? Sonda neden ayrıca bir post_layernorm var?">
+Post-norm: <span className="mono">x = LN(x + f(x))</span>. Pre-norm: <span className="mono">x = x + f(LN(x))</span>. SigLIP (ve Gemma) pre-norm kullanıyor: akış hiç normalize edilmiyor ve kimlik yolu kesintisiz kalıyor. Bu, derin modellerde gradyanı korur (<Link to="/gemma/akis">5.1</Link>). Bedeli şu: son katmanın çıktısı normalize edilmemiş, büyümüş bir akış (yukarıdaki grafik). <code>post_layernorm</code> bunu tek seferde normalize ediyor.
+</ConceptQ>
+<ConceptQ n={2} q="Burada attention maskesi neden yok? Hafta 7–8'deki tril neden buraya uymaz?">
+<code>tril</code> (causal maske) dil modelinde geleceği gizlemek için: bir token'ı üretirken sonrakileri görmemeli. Görüntüde "gelecek" yok. 256 yama aynı anda var ve bir yamanın anlamı her yönden komşularına bağlı (bir harfin üstü ve altı). Causal maske uygulasan sol üstteki yama sağ alttakini hiç göremezdi.
+</ConceptQ>
+<ConceptQ n={3} q="27 katman × 16 head: so400m'de kaç parametre attention'da, kaçı MLP'de?">
+Katman başına attention: 4 × 1152² + 4 × 1152 ≈ 5.31 M. MLP: 2 × 1152 × 4304 + 4304 + 1152 ≈ 9.92 M. 27 katmanda attention ≈ 143 M, MLP ≈ 268 M. Head sayısı parametreyi değiştirmiyor, sadece aynı D'yi nasıl böldüğümüzü belirliyor. Yukarıdaki çubuklar senin modelinden ölçülen değerler.
+</ConceptQ>

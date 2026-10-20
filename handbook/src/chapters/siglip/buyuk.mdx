@@ -1,0 +1,48 @@
+import { Callout, ConceptQ, Fig, S, Note } from "../../components/ui";
+import { ManimVideo } from "../../components/misc";
+import { ContrastMatrix, ResolutionCost } from "./Big";
+import { Link } from "react-router-dom";
+
+# Büyük resim
+
+<p className="lead">PaliGemma üç parça: görüntüyü token'lara çeviren SigLIP, onları dil modelinin boyutuna taşıyan tek bir linear katman ve cevabı yazan Gemma. Kod yazmaya başlamadan önce iki soru: görüntü kodlayıcı neden <i>kontrastif</i> eğitilmiş bir model, ve çözünürlük neden bu kadar pahalı?</p>
+
+$$
+\text{görüntü} \xrightarrow{\text{SigLIP}} [256,\,1152] \xrightarrow{\text{Linear}} [256,\,2048] \xrightarrow{+\,\text{prompt}} \text{Gemma} \rightarrow \text{cevap}
+$$
+
+## Kontrastif öğrenme: softmax ve sigmoid
+
+SigLIP, milyarlarca (görüntü, metin) çiftiyle eğitildi. Bir batch'te N görüntü ve N metin var. Model her görüntü–metin çifti için bir benzerlik skoru üretiyor: köşegen doğru çiftler, geri kalanı yanlış çiftler. Amaç köşegeni büyütüp geri kalanı küçültmek. Fark, bunun **nasıl** ölçüldüğünde.
+
+<Fig wide caption={<><b>Benzerlik matrisi.</b> Bir hücrenin üstüne gel. Softmax'ta (CLIP) bir hücrenin olasılığı bütün satırına (ve simetrik kayıpta sütununa) bağlı: payda bütün batch'i görüyor. Sigmoid'de (SigLIP) her hücre kendi başına bir ikili sınıflandırma.</>}>
+<ContrastMatrix />
+</Fig>
+
+<Note label="Kaynak">Zhai ve ark., <i>Sigmoid Loss for Language Image Pre-Training</i>, ICCV 2023 (<code>papers/siglip.pdf</code>).</Note>
+
+Softmax'ın paydası bütün batch'e bağlı olduğu için cihazlar arasında N × N matrisin tamamı toplanmalı. Ayrıca sayısal kararlılık için max-çıkarma ve log-sum-exp gerekiyor. Sigmoid'de her hücre bağımsız: batch büyüdükçe bellek ve iletişim maliyeti çok daha iyi ölçekleniyor.
+
+<Callout kind="neden" title="PaliGemma bu kaybı hiç kullanmıyor. O zaman neden?">
+PaliGemma eğitiminde SigLIP kaybı yok. Görüntü kodlayıcı, Gemma'nın cevap kaybıyla birlikte ince ayar görüyor. Kontrastif ön eğitimin işi, kodlayıcıya <b>dille hizalanmış</b> bir temsil kazandırmak: yamaların vektörleri zaten "metinle konuşulabilir" bir uzayda. Dil modelinin bu temsili tek bir linear katmanla okuyabilmesinin nedeni bu.
+</Callout>
+
+## Çözünürlük ve maliyet
+
+Görsel token sayısı (görüntü kenarı / 14)². Attention her token'ı her token'la karşılaştırdığı için maliyeti T² ile büyüyor.
+
+<Fig wide caption={<><b>224, 448, 896.</b> Deneyinde gördüğün fark buradan: 448 px küçük yazıyı okuyor ama soru başına ~3.4 kat süre alıyordu.</>}>
+<ResolutionCost />
+</Fig>
+
+## Kavram soruları (aşama 0)
+
+<ConceptQ n={1} q="PaliGemma eğitim sırasında SigLIP kaybını hiç kullanmıyor. Öyleyse neden kontrastif olarak önceden eğitilmiş bir görüntü kodlayıcı seçiliyor?">
+Çünkü kontrastif ön eğitim, görüntü temsilini dil uzayıyla hizalıyor: bir yamanın vektörü "kedi kulağı" gibi kavramlarla metinsel olarak ilişkilendirilebilir yönler taşıyor. Sınıflandırma ile eğitilmiş bir kodlayıcı (ör. ImageNet) sadece 1000 sınıfı ayırmayı öğrenir. Dil modeline köprü kurmak için çok daha zengin, açık sözlüklü bir temsil gerekiyor. PaliGemma makalesi (§3.1) SigLIP So400m'i bu yüzden seçiyor.
+</ConceptQ>
+<ConceptQ n={2} q="Softmax kaybında batch'teki her örnek neden diğer bütün örneklere bağımlı? Sigmoid bunu nasıl ortadan kaldırıyor?">
+Softmax'ta bir çiftin olasılığı <span className="mono">e^s_ij / Σ_k e^s_ik</span>: payda satırdaki bütün örnekleri içeriyor. Bir örneğin skoru değişince bütün satırın olasılıkları değişiyor. Sigmoid'de her çift <span className="mono">σ(z_ij(t·s_ij + b))</span> ile kendi başına ikili sınıflandırılıyor (z = +1 doğru çift, −1 yanlış). Payda yok, toplam yok. Yukarıdaki matriste hover ile görebilirsin: 11 hücre ↔ 1 hücre.
+</ConceptQ>
+<ConceptQ n={3} q="224 px görüntü ve 14 px yama: kaç görsel token çıkar? 448 px'te kaç? Bu, Gemma'nın hesap maliyetini neden 4 kattan fazla artırır?">
+224/14 = 16 → 16² = <b>256</b> token. 448/14 = 32 → <b>1024</b> token. Token sayısı 4 kat. Gemma'daki doğrusal kısımlar (MLP, projeksiyonlar) ~4 kat büyüyor, ama attention skor matrisi T × T olduğu için ~16 kat büyüyor. Toplam maliyet 4'ten fazla, 16'dan az. KV cache'in bellek maliyeti de ~4 kat (aşama 7).
+</ConceptQ>

@@ -21,7 +21,7 @@ import { Link } from "react-router-dom";
 
 <CodeWalk file="paligemma.py" symbol="PaliGemmaForConditionalGeneration._merge_input_ids_with_image_features" notes={[
   { match: "scaled_image_features = image_features /", title: "Görsel token'lar önce bölünüyor", text: <>Projektör çıktısı <S s="B, 256, 2048" ax="B,T,D" /> √2048'e bölünüyor. Birkaç satır sonra Gemma bütün diziyi √2048 ile çarpacak. Görsel token'lar için bu ikisi birbirini götürüyor: net etki ×1.</> },
-  { match: "masked_scatter(image_mask_expanded", title: "Diziye yerleşme", text: <>Bölünmüş özellikler <code>&lt;image&gt;</code> konumlarına sırayla yazılıyor. Bölüm 4'te ayrıntılı anlatılacak.</> },
+  { match: "masked_scatter(image_mask_expanded", title: "Diziye yerleşme", text: <>Bölünmüş özellikler <code>&lt;image&gt;</code> konumlarına sırayla yazılıyor. Animasyonu <Link to="/hepsi">Bölüm 6</Link>'da.</> },
 ]} />
 
 ## √d dört adımda

@@ -1,0 +1,57 @@
+import { Callout, ConceptQ, Fig, S, Note, Predict } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { SequenceStrip, LocBoxTool, ProjectorStats } from "./Bridge";
+import { Link } from "react-router-dom";
+
+# Köprü: processor ve projektör
+
+<p className="lead">Görüntü tarafı 256 vektör üretti. Dil modeli ise bir token dizisi bekliyor. Köprünün iki ayağı var: <b>processor</b> görüntü için 256 boş yer bırakan bir dizi kuruyor, <b>projektör</b> görsel vektörleri dil modelinin boyutuna taşıyor. İkisinin birleştiği yer <Link to="/hepsi">Bölüm 6</Link>.</p>
+
+## Dizi: 256 yer tutucu ve prompt
+
+<Fig wide caption={<><b>Modelin gördüğü dizi.</b> 256 <code>&lt;image&gt;</code> yer tutucusu (her biri tek bir hücre), ardından <code>&lt;bos&gt;</code>, prompt'un parçaları ve <code>\n</code>. Bir hücrenin üstüne gel: oraya hangi yamanın yazılacağı görünür. Üstten başka bir prompt seç.</>}>
+<SequenceStrip />
+</Fig>
+
+<CodeWalk file="processing.py" symbol="add_image_to_prompt" notes={[
+  { match: "return f\"{image_token * image_seq_len}{bos_token}{prefix_prompt}\\n\"", title: "dizinin tarifi", text: <><code>"&lt;image&gt;" × 256 + "&lt;bos&gt;" + prompt + "\n"</code>. Görsel token'lar <b>önde</b>, <code>&lt;bos&gt;</code> onlardan sonra. <code>\n</code> prefix'in (görüntü + soru) bittiğini, cevabın başlayacağını işaret ediyor.</> },
+]} />
+
+<CodeWalk file="processing.py" symbol="PaliGemmaProcessor.__call__" notes={[
+  { match: "assert len(images) == 1 and len(text) == 1", title: "tek örnek", text: <>Şimdilik batch = 1. Padding de olmadığı için <code>attention_mask</code> hep 1.</> },
+  { match: "add_special_tokens=add_special_tokens", title: "add_special_tokens=False", text: <><code>&lt;bos&gt;</code>'u biz elle, görsel token'ların <b>arkasına</b> koyduk. Tokenizer'ın kendisi de eklese dizinin başına ikinci bir <code>&lt;bos&gt;</code> gelirdi.</> },
+  { match: "return_data = {\"pixel_values\": pixel_values, **inputs}", title: "çıktı", text: <><code>pixel_values</code> <S s="1, 3, 224, 224" ax="B,C,," />, <code>input_ids</code> ve <code>attention_mask</code> <S s="1, T" ax="B,T" />.</> },
+]} />
+
+<Note label="Tokenizer">Tokenizer'ı yeniden yazmadık: Gemma'nın SentencePiece modeli, 257216 parçalık sözlük. Hafta 9'daki BPE ile aynı aile.</Note>
+
+## Kutular da metin: &lt;loc&gt; token'ları
+
+PaliGemma tespit (detection) sonucunu da metin olarak yazıyor. Sözlükte 1024 tane `<locXXXX>` token'ı var. Her biri görüntü kenarının 1/1024'lük bir dilimi.
+
+<Fig wide caption={<><b>Bir kutu çiz.</b> Model bu kutuyu "y_min x_min y_max x_max etiket" sırasıyla dört token yazarak ifade ediyor. Aşama 6'da modelin kendi kutularını bu şekilde çözeceğiz.</>}>
+<LocBoxTool />
+</Fig>
+
+## Projektör: tek bir Linear
+
+<CodeWalk file="paligemma.py" symbol="PaliGemmaMultiModalProjector" notes={[
+  { match: "self.linear = nn.Linear(config.hidden_size, config.projection_dim, bias=True)", title: "1152 → 2048, bias'lı", text: <>Ağırlık <S s="2048, 1152" ax="D,D" />, bias <S s="2048" ax="D" />. 2.36 M parametre, modelin binde biri. HF anahtarı <code>multi_modal_projector.linear.weight</code>.</> },
+  { match: "hidden_states = self.linear(image_features)", title: "her yama ayrı", text: <><S s="B, 256, 1152" ax="B,T,D" /> → <S s="B, 256, 2048" ax="B,T,D" />. Token'lar karışmıyor.</> },
+]} />
+
+<Fig wide caption={<><b>Gerçek projektör ağırlıkları.</b> Dağılım sıfır etrafında, std ≈ 0.008. Bias.lar yaklaşık iki kat daha geniş yayılıyor (std ≈ 0.018).</>}>
+<ProjectorStats />
+</Fig>
+
+## Kavram soruları (aşama 3)
+
+<ConceptQ n={1} q="Köprü neden tek bir linear katman?">
+PaliGemma makalesi (§5.5, Connector design) linear projeksiyon ile MLP bağlayıcıyı karşılaştırıyor ve aralarında anlamlı bir fark bulmuyor. Bu yüzden daha basit olanı seçiyor. Sebep: SigLIP'in temsili zaten dille hizalı (Bölüm 1) ve Gemma güçlü. Ağır işi iki taraf yapıyor, köprünün çoğunlukla boyutu eşlemesi yetiyor. Ayrıca PaliGemma eğitimde hiçbir parçayı dondurmuyor: SigLIP de Gemma da birlikte ayarlanıyor, yani esneklik zaten iki taraftan geliyor.
+</ConceptQ>
+<ConceptQ n={2} q="Görsel token'lar embedding tablosundan gelmiyor. <image> token'ının embedding'i nerede ve nasıl değiştiriliyor?">
+<code>&lt;image&gt;</code> (id 257152) sözlükte gerçek bir token ve tabloda bir satırı var. Önce bütün <code>input_ids</code> tablodan geçiyor, &lt;image&gt;'ın satırı da dahil. Sonra <code>_merge_input_ids_with_image_features</code>'da <code>masked_scatter</code> o konumların üzerine projektör çıktısını (÷√d ile) sırayla yazıyor. &lt;image&gt;'ın tablodaki satırı hiç kullanılmamış oluyor (<Link to="/hepsi">Bölüm 6</Link>'daki animasyon).
+</ConceptQ>
+<ConceptQ n={3} q="Prompt'un sonuna \n eklenmesinin rolü ne?">
+PaliGemma bir prefix-LM: prefix (görüntü + prompt) tam attention, suffix (cevap) causal. <code>\n</code> eğitimde prefix'in bittiği yeri işaretliyordu. Model <code>\n</code>'den sonraki token'ın cevabın ilk token'ı olduğunu öğrendi. Olmazsa model prompt'u devam ettirmeye çalışabilir. Bu ayraç aşama 6'daki prefix maskesinin sınırını da belirliyor.
+</ConceptQ>

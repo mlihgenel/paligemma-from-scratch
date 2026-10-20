@@ -33,18 +33,19 @@ function inkFor(bg: string) {
 }
 export const isDark = () => document.documentElement.dataset.theme === "dark";
 
-export function CellCanvas({ cells, width, height, max = 1, onDrag, labels, highlightGroup }: {
+export function CellCanvas({ cells, width, height, max = 1, onDrag, labels, highlightGroup, onHover }: {
   cells: Cell[]; width: number; height: number; max?: number;
   onDrag?: (id: string, dv: number) => void;
   labels?: ReactNode;
   highlightGroup?: string | null;
+  onHover?: (id: string | null) => void;
 }) {
   const [hover, setHover] = useState<{ c: Cell; x: number; y: number } | null>(null);
   const drag = useRef<{ id: string; y: number } | null>(null);
   const dark = isDark();
   const hg = hover?.c.group ?? highlightGroup ?? null;
   return (
-    <div style={{ position: "relative", width, height, touchAction: "none" }} onPointerLeave={() => setHover(null)}
+    <div style={{ position: "relative", width, height, touchAction: "none" }} onPointerLeave={() => { setHover(null); onHover?.(null); }}
       onPointerMove={(e) => {
         if (drag.current && onDrag) {
           const dy = drag.current.y - e.clientY;
@@ -64,6 +65,7 @@ export function CellCanvas({ cells, width, height, max = 1, onDrag, labels, high
             onPointerEnter={(e) => {
               const r = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
               setHover({ c, x: e.clientX - r.left, y: e.clientY - r.top });
+              onHover?.(c.id);
             }}
             onPointerMove={(e) => {
               const r = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
