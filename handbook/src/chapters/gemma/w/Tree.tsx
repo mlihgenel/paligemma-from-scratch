@@ -16,8 +16,8 @@ const WHAT: Record<string, [string, string?]> = {
   GemmaMLP: ["GeGLU: down(gelu_tanh(gate(x)) ⊙ up(x)). Token'lar arası karışma yok.", "/gemma/geglu"],
   GemmaRMSNorm: ["x / rms(x) · (1 + w). Ortalama çıkarılmaz, bias yok, hesap float32'de.", "/gemma/rmsnorm"],
   Linear: ["y = x Wᵀ (+ b). Son eksen dönüşür, diğer eksenler aynen kalır."],
-  PaliGemmaForConditionalGeneration: ["Üç parçayı birleştiren kök: vision_tower, multi_modal_projector, language_model.", "/hepsi"],
-  SiglipVisionModel: ["SigLIP sarmalayıcı: anahtarların vision_model.* olması için.", "/hepsi"],
+  PaliGemmaForConditionalGeneration: ["Üç parçayı birleştiren kök: vision_tower, multi_modal_projector, language_model.", "/kopru"],
+  SiglipVisionModel: ["SigLIP sarmalayıcı: anahtarların vision_model.* olması için.", "/kopru"],
   SiglipVisionTransformer: ["Embedding → 27 encoder katmanı → post_layernorm."],
   SiglipVisionEmbeddings: ["Conv2d ile yamalar + öğrenilen konum embedding'i."],
   Conv2d: ["kernel = stride = 14: üst üste binmeyen 14×14 yamalar, her yamaya aynı linear dönüşüm."],
@@ -26,7 +26,7 @@ const WHAT: Record<string, [string, string?]> = {
   SiglipAttention: ["16 head, head_dim 72. softmax(QKᵀ/√72)V."],
   SiglipMLP: ["fc1 → gelu_tanh → fc2. Klasik (kapısız) MLP."],
   LayerNorm: ["Ortalama çıkar, varyansa böl, γ ve β ile ölçekle. eps = 1e-6."],
-  PaliGemmaMultiModalProjector: ["Tek Linear: 1152 → 2048. Görsel token'ları dil modelinin boyutuna taşır.", "/hepsi"],
+  PaliGemmaMultiModalProjector: ["Tek Linear: 1152 → 2048. Görsel token'ları dil modelinin boyutuna taşır.", "/kopru"],
 };
 
 const join = (parent: string, k: string) => (parent === "(kök)" ? k : parent + "." + k);

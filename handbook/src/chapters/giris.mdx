@@ -1,54 +1,30 @@
-import { AxisLegend, Callout, Fig, S, Note } from "../components/ui";
-import { IntroDemo, ChapterList } from "./IntroDemo";
+import { Callout } from "../components/ui";
+import { ArchDiagram } from "../interact/ArchDiagram";
+import { PartCards } from "./PartCards";
 import { Link } from "react-router-dom";
 
-<div className="eyebrow" style={{ marginTop: 8 }}>senin kodunla, satır satır</div>
+<div className="eyebrow" style={{ marginTop: 8 }}>görüntüyü okuyan bir dil modeli</div>
 
-# PaliGemma'nın içinden geçen bir el kitabı
+# PaliGemma nasıl çalışır?
 
-<p className="lead">Bir görüntü ve bir cümle, 2.75 milyar parametreden geçip bir cevaba dönüşüyor. Bu kitap o yolu <b>senin yazdığın kodla</b>, satır satır ve sayı sayı izliyor. Kod değişirse kitaptaki satırlar da değişir.</p>
+<p className="lead">PaliGemma bir fotoğrafa bakıp onun hakkında yazabilen bir model. İçinde iki ayrı model var: <b style={{ color: "var(--part-vision)" }}>görüntüyü</b> anlayan SigLIP ve <b style={{ color: "var(--part-lang)" }}>metin</b> yazan Gemma. Aralarında da tek katmanlık bir <b style={{ color: "var(--part-bridge)" }}>köprü</b>. Aşağıdaki animasyon bir fotoğrafın cevaba dönüşmesini baştan sona gösteriyor.</p>
 
-Videolarda her şey anlatılıyor ama hızlı geçiliyor. Bu kitap her satırda durup üç soruyu soruyor: **bu satır girdiye ne yapıyor**, **mimaride neyi etkiliyor** ve **olmasa ne bozulur**.
+<div className="wide">
+<ArchDiagram />
+</div>
 
-## Okumanın üç yolu
+## Tek fikir: görüntüyü kelimelere çevir
 
-Kitabın figürleri üç şekilde konuşuyor. Hemen dene: soldaki sayıları yukarı-aşağı sürükle, sağdakilerin üstüne gel.
+Dil modelleri sadece token dizisi okuyabiliyor. PaliGemma'nın hilesi basit: görüntüyü de bir token dizisine çeviriyor. SigLIP fotoğrafı 256 parçaya bölüyor ve her parça için bir vektör üretiyor. Köprü bu vektörleri Gemma'nın kelime vektörleriyle aynı boyuta getiriyor. Gemma'nın gözünde artık 256 "görsel kelime" ve arkasından gelen birkaç gerçek kelime var. Gemma bunları okuyup cevabı her zamanki gibi kelime kelime yazıyor.
 
-<Fig wide caption={<><b>Küçük bir örnek.</b> Soldaki vektörü değiştirdikçe sağdaki normalize edilmiş hali canlı hesaplanıyor. Bir hücrenin üstüne gelince o sayının nasıl hesaplandığı görünüyor.</>}>
-<IntroDemo />
-</Fig>
+Kitabın geri kalanı bu yolun her durağını açıyor. Önce bütün yolu gerçek bir fotoğrafla yürüyoruz. Sonra sırasıyla üç parçaya giriyoruz:
 
-- **Kaydır.** Uzun anlatımlar scrollytelling biçiminde: metin kayarken sağdaki figür adım adım değişiyor. Figürün sağ üstündeki noktalar hangi adımda olduğunu gösteriyor.
-- **Üstüne gel.** Hemen her sayının, küpün ve yamanın üstüne gelince değeri ve nereden geldiği görünüyor.
-- **Sürükle.** Düzenlenebilir hücreleri yukarı-aşağı, noktaları düzlemde sürükleyebilirsin. 3D sahneleri döndürebilirsin, kaybolursan sağ üstteki "görünümü sıfırla" düğmesi çıkıyor.
+<div className="wide">
+<PartCards />
+</div>
 
-<Note label="Kod">Kod blokları <code>src/</code> klasöründen canlı okunuyor. <span style={{ color: "var(--accent)" }}>●</span> işaretli satırlara tıklayınca açıklama açılır.</Note>
-
-## Renk kodu: eksenler
-
-Her eksenin kitap boyunca tek bir rengi var. Örnek: <S s="B, T, D" /> ya da gerçek boyutlarla <S s="1, 260, 2048" ax="B,T,D" />.
-
-<Fig>
-<AxisLegend axes={[["B", "batch"], ["T", "dizi uzunluğu (token)"], ["D", "gizli boyut"], ["V", "sözlük"], ["I", "MLP ara boyutu"], ["H", "head"], ["hd", "head_dim"]]} />
-</Fig>
-
-## Sayılar nereden geliyor?
-
-Kitaptaki sayıların hiçbiri uydurma değil. Hepsi `handbook/export/` altındaki scriptlerle **senin modüllerin** çalıştırılarak üretildi:
-
-- **Gerçek ağırlık parçaları.** PaliGemma checkpoint'inden HTTP Range ile sadece gereken tensörler indirildi, toplam ~8 MB: 37 RMSNorm ağırlığı, 430 embedding satırı, SigLIP konum embedding'i ve yama filtreleri, projektör.
-- **Gerçek görüntüler.** Deneyindeki tabela fotoğrafları, senin `processing.py` ve `siglip.py`'n ile işlendi.
-- **Oyuncak Gemma.** Gerçek boyutlu Gemma 8 GB'a sığmadığı için hidden 256, 6 katmanlı bir kopya kullanıldı. Norm ağırlıkları gerçek, embedding dağılımı gerçek.
-- **Gerçek boyutlu şekiller.** Model `meta` cihazında (0 bayt) kuruldu ve gerçek bir forward çalıştırıldı.
-
-<Callout kind="not" title="Veriyi yenilemek">
-Kodunu değiştirdikten sonra proje kökünden: <code>.venv/bin/python handbook/export/export_gemma_toy.py</code> (diğer scriptler de aynı klasörde).
+<Callout kind="not" title="Sayılar nereden geliyor?">
+Kitaptaki sayılar uydurma değil. Gerçek PaliGemma ağırlıklarından küçük parçalar, gerçek fotoğraflar ve bu projede sıfırdan yazılan kod (<code>src/</code>) ile üretildi. Kod blokları da o dosyalardan canlı okunuyor. Yukarıdaki animasyon makaledeki mimariyi gösteriyor. Cevap metni temsilî, çünkü bizim kodumuzda attention henüz yazılmadı.
 </Callout>
 
-## Nereden başlamalı?
-
-Bütün resmi görmek için <Link to="/oyun-alani">Oyun alanı</Link>'ndan başla. Gemma'nın çekirdeği için doğrudan <Link to="/gemma">Bölüm 5</Link>'e git.
-
-<div className="wide" style={{ marginTop: 28 }}>
-<ChapterList />
-</div>
+<p style={{ marginTop: 32 }}><Link to="/uctan-uca"><b>Başla: 1. Uçtan uca →</b></Link></p>

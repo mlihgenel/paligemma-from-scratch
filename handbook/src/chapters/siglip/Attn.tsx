@@ -1,4 +1,4 @@
-// Bölüm 3: attention'ın tensör koreografisi (3D), gerçek attention haritaları, PCA, parametreler
+// Bölüm 2.3: attention'ın tensör koreografisi (3D), gerçek attention haritaları, PCA, parametreler
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useData, Arr } from "../../lib/data";
 import { rng, softmax } from "../../lib/tensor";

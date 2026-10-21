@@ -11,12 +11,12 @@ import { Link } from "react-router-dom";
 
 <CodeWalk file="gemma.py" symbol="GemmaModel" notes={[
   { match: "self.padding_idx = config.pad_token_id", title: "padding_idx = 0", text: <>PaliGemma'da pad id = 0. <code>nn.Embedding(padding_idx=0)</code> o satırın gradyanını sıfır tutuyor (eğitimde güncellenmiyor). Inference'ta etkisi yok, ama <code>_merge_input_ids_with_image_features</code> zaten pad konumlarını sıfırlıyor.</> },
-  { match: "self.embed_tokens = nn.Embedding", title: "embedding tablosu", text: <><S s="257216, 2048" ax="V,D" />, 527 M parametre. Aynı tensör lm_head olarak da kullanılıyor (<Link to="/gemma/tying">5.7</Link>).</> },
+  { match: "self.embed_tokens = nn.Embedding", title: "embedding tablosu", text: <><S s="257216, 2048" ax="V,D" />, 527 M parametre. Aynı tensör lm_head olarak da kullanılıyor (<Link to="/gemma/tying">4.8</Link>).</> },
   { match: "self.layers = nn.ModuleList(", title: "ModuleList", text: <>Katmanları <code>nn.Module</code> olarak kaydediyor: parametreler <code>model.parameters()</code>'a ve <code>state_dict</code>'e <code>layers.0.…</code>, <code>layers.1.…</code> adlarıyla giriyor. Aşağıdaki karşılaştırma tablosuna bak.</> },
   { match: "self.norm = GemmaRMSNorm", title: "son norm", text: <>Akış katmanlar boyunca hiç normalize edilmedi ve büyüdü. lm_head'e girmeden önce tek bir kez normalize ediliyor. Pre-norm mimarilerin hepsinde bu son norm var (SigLIP'te <code>post_layernorm</code>).</> },
   { match: "def get_input_embeddings", title: "get_input_embeddings", text: <>PaliGemma'nın embedding tablosuna adla değil bu metotla erişmesi için. HF'nin standart arayüzü.</> },
   { match: "def forward(self, inputs_embeds", title: "girdi: id değil embedding", text: <>GemmaModel <code>input_ids</code> almıyor, hazır embedding alıyor. Çünkü görsel token'lar tablodan gelmiyor: PaliGemma önce tabloyu kullanıyor, sonra görsel özellikleri yerleştiriyor, sonra buraya veriyor.</> },
-  { match: "normalizer = torch.tensor", title: "√d", text: <>Bkz. <Link to="/gemma/sqrt-d">5.2</Link>.</> },
+  { match: "normalizer = torch.tensor", title: "√d", text: <>Bkz. <Link to="/gemma/sqrt-d">4.3</Link>.</> },
   { match: "hidden_states = decoder_layer(hidden_states)", title: "döngü", text: <>18 kez aynı şekil: <S s="B, T, 2048" ax="B,T,D" />. Attention eklenince <code>decoder_layer(hidden_states, attention_mask, position_ids)</code> olacak.</> },
   { match: "hidden_states = self.norm(hidden_states)", title: "son norm", text: <>Çıktı lm_head'e gidiyor (GemmaForCausalLM'de).</> },
 ]} />
@@ -41,7 +41,7 @@ Akış katmanlar boyunca büyüyor. Bunu gerçek bir modelde, senin SigLIP encod
 <SiglipGrowth />
 </Fig>
 
-Gemma'da da aynı yapı: oyuncak modelde akışın normu 48'den 57'ye çıkıyor (<Link to="/gemma/akis">5.1</Link>). lm_head bu akışı embedding tablosuyla nokta çarpımına sokacak. Normalize edilmezse logit'lerin ölçeği girdiye ve katman sayısına bağlı olurdu.
+Gemma'da da aynı yapı: oyuncak modelde akışın normu 48'den 57'ye çıkıyor (<Link to="/gemma/akis">4.2</Link>). lm_head bu akışı embedding tablosuyla nokta çarpımına sokacak. Normalize edilmezse logit'lerin ölçeği girdiye ve katman sayısına bağlı olurdu.
 
 <ShapeTrace start={{ shape: "1, 260, 2048", ax: "B,T,D", label: "inputs_embeds (PaliGemma'dan)" }} steps={[
   { op: "× normalizer", shape: "1, 260, 2048", ax: "B,T,D" },

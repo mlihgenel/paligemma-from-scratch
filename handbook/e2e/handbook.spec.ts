@@ -2,7 +2,7 @@
 // Çalıştır: npm run dev (ayrı terminalde), sonra npx playwright test
 import { expect, test } from "@playwright/test";
 
-const PAGES = ["/", "/oyun-alani", "/buyuk-resim", "/goruntu", "/encoder", "/kopru", "/ekler", "/hepsi", "/gemma", "/gemma/akis", "/gemma/sqrt-d", "/gemma/rmsnorm", "/gemma/geglu", "/gemma/katman", "/gemma/model", "/gemma/tying", "/gemma/dogrulama", "/gemma/sina"];
+const PAGES = ["/", "/uctan-uca", "/buyuk-resim", "/goruntu", "/encoder", "/kopru", "/gemma", "/gemma/akis", "/gemma/sqrt-d", "/gemma/rmsnorm", "/gemma/geglu", "/gemma/katman", "/gemma/model", "/gemma/tying"];
 
 for (const p of PAGES) {
   test(`sayfa ${p}`, async ({ page }) => {
@@ -19,5 +19,13 @@ for (const p of PAGES) {
     for (const v of await page.locator("video").all()) {
       await expect.poll(() => v.evaluate((el: HTMLVideoElement) => el.readyState)).toBeGreaterThan(0);
     }
+  });
+}
+
+// Eski adresler yeni sayfalara yönleniyor
+for (const [from, to] of [["/oyun-alani", "/uctan-uca"], ["/hepsi", "/kopru"], ["/gemma/sina", "/gemma"]]) {
+  test(`yönlendirme ${from} → ${to}`, async ({ page }) => {
+    await page.goto("http://localhost:5173/#" + from, { waitUntil: "networkidle" });
+    await expect(page).toHaveURL(new RegExp("#" + to + "$"));
   });
 }

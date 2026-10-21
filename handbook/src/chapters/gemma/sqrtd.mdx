@@ -15,13 +15,13 @@ import { Link } from "react-router-dom";
 <CodeWalk file="gemma.py" symbol="GemmaModel.forward" notes={[
   { match: "hidden_states = inputs_embeds", title: "Giriş", text: <>Gelen tensör <S s="B, T, D" />. Metin token'ları embedding tablosundan, görsel token'lar projektörden geliyor ve <code>paligemma.py</code>'de birleştirilmiş durumdalar.</> },
   { match: "normalizer = torch.tensor", title: "√d, girdinin dtype'ında", text: <>√2048 = 45.2548… Tensör <code>hidden_states.dtype</code> ile kuruluyor. Model bf16'da çalışırken bu sayı <b>45.25</b>'e yuvarlanıyor. Bilerek böyle: HF de aynısını yapıyor. Aşağıdaki "bf16" bölümüne bak.</> },
-  { match: "hidden_states = hidden_states * normalizer", title: "Ölçekleme", text: <>Her eleman 45.25 ile çarpılıyor. Şekil aynı kalıyor: <S s="B, T, D" />. Bu satırdan sonra akış otoyola giriyor (<Link to="/gemma/akis">5.1</Link>).</> },
+  { match: "hidden_states = hidden_states * normalizer", title: "Ölçekleme", text: <>Her eleman 45.25 ile çarpılıyor. Şekil aynı kalıyor: <S s="B, T, D" />. Bu satırdan sonra akış otoyola giriyor (<Link to="/gemma/akis">4.2</Link>).</> },
   { match: "for decoder_layer in self.layers", title: "Katmanlar", text: <>Ölçeklenmiş akış 18 katmandan geçiyor.</> },
 ]} />
 
 <CodeWalk file="paligemma.py" symbol="PaliGemmaForConditionalGeneration._merge_input_ids_with_image_features" notes={[
   { match: "scaled_image_features = image_features /", title: "Görsel token'lar önce bölünüyor", text: <>Projektör çıktısı <S s="B, 256, 2048" ax="B,T,D" /> √2048'e bölünüyor. Birkaç satır sonra Gemma bütün diziyi √2048 ile çarpacak. Görsel token'lar için bu ikisi birbirini götürüyor: net etki ×1.</> },
-  { match: "masked_scatter(image_mask_expanded", title: "Diziye yerleşme", text: <>Bölünmüş özellikler <code>&lt;image&gt;</code> konumlarına sırayla yazılıyor. Animasyonu <Link to="/hepsi">Bölüm 6</Link>'da.</> },
+  { match: "masked_scatter(image_mask_expanded", title: "Diziye yerleşme", text: <>Bölünmüş özellikler <code>&lt;image&gt;</code> konumlarına sırayla yazılıyor. Animasyonu <Link to="/kopru#birlestirme">Bölüm 3</Link>'te.</> },
 ]} />
 
 ## √d dört adımda
@@ -55,7 +55,7 @@ Bazı anlatımlarda "embedding'ler küçük başlatıldığı için √d ile ça
 
 ## Neden çarpıyoruz? Ölçek dengesi
 
-Akışa iki tür şey giriyor: başta embedding, sonra her katmanın güncellemeleri (<Link to="/gemma/akis">5.1</Link>). RMSNorm sayesinde dallar akışın büyüklüğünü görmüyor, hep norm'lu bir kopyayla çalışıyor. **Toplama ise ölçeğe duyarlı.** Akış 3 birim büyüklüğündeyse ve her katman 5 birimlik bir güncelleme ekliyorsa, embedding'in taşıdığı bilgi ilk katmanda boğuluyor.
+Akışa iki tür şey giriyor: başta embedding, sonra her katmanın güncellemeleri (<Link to="/gemma/akis">4.2</Link>). RMSNorm sayesinde dallar akışın büyüklüğünü görmüyor, hep norm'lu bir kopyayla çalışıyor. **Toplama ise ölçeğe duyarlı.** Akış 3 birim büyüklüğündeyse ve her katman 5 birimlik bir güncelleme ekliyorsa, embedding'in taşıdığı bilgi ilk katmanda boğuluyor.
 
 
 
@@ -67,7 +67,7 @@ hidden_states = hidden_states                       # ← ×1`}
   result={(b) => <StreamCompare show={b ? ["normal", "no_sqrt_d"] : ["normal"]} />} />
 
 <Callout kind="neden" title="Bağlantı: weight tying">
-Bu çarpımın kökü <i>Attention Is All You Need</i> (2017, §3.4): "embedding katmanlarında ağırlıkları √d_model ile çarpıyoruz". O modelde de embedding tablosu çıkış katmanıyla paylaşılıyordu. Gemma'da da öyle (<Link to="/gemma/tying">5.7</Link>): <b>aynı tablo</b> hem girişte satır seçmek için hem de çıkışta logit hesaplamak için (<span className="mono">logit = norm(h) · e</span>) kullanılıyor.
+Bu çarpımın kökü <i>Attention Is All You Need</i> (2017, §3.4): "embedding katmanlarında ağırlıkları √d_model ile çarpıyoruz". O modelde de embedding tablosu çıkış katmanıyla paylaşılıyordu. Gemma'da da öyle (<Link to="/gemma/tying">4.8</Link>): <b>aynı tablo</b> hem girişte satır seçmek için hem de çıkışta logit hesaplamak için (<span className="mono">logit = norm(h) · e</span>) kullanılıyor.
 <br /><br />
 Bu iki rol farklı büyüklükler istiyor. Çıkışta tablonun küçük kalması lazım, yoksa logit'ler patlar: norm(h)'nin normu ≈ √2048·(1+w) ≈ 45+ ve satır normu ≈ 8 iken bile logit'ler onlarca birim. Girişte ise akışta katman güncellemeleriyle yarışacak kadar büyük olması lazım. ×√d bu iki gereksinimi birbirinden ayırıyor: tablo "çıkış ölçeğinde" kalıyor, girişte 45 kat büyütülüyor.
 </Callout>

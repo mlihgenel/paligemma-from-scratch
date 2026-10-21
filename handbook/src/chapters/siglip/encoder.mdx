@@ -52,9 +52,9 @@ Multi-head attention'ı anlamak için tensör şekillerini izlemek yetiyor. Aşa
 ## Encoder katmanı ve akışın büyümesi
 
 <CodeWalk file="siglip.py" symbol="SiglipEncoderLayer" notes={[
-  { match: "self.layer_norm1 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)", title: "LayerNorm, eps = 1e-6", text: <>SigLIP LayerNorm kullanıyor (ortalama + varyans + γ, β). Gemma RMSNorm kullanıyor (<Link to="/gemma/rmsnorm">5.3</Link>). eps PyTorch varsayılanı (1e-5) değil, 1e-6.</> },
-  { match: "residual = hidden_states", title: "pre-norm", text: <>Gemma'daki desenin aynısı: residual norm'dan <b>önce</b> saklanıyor (<Link to="/gemma/akis">5.1</Link>).</> },
-  { match: "hidden_states = self.mlp(hidden_states)", title: "MLP", text: <>fc1 (1152 → 4304) → gelu_tanh → fc2. Kapısız, klasik MLP. GeGLU ile karşılaştırma: <Link to="/gemma/geglu">5.4</Link>.</> },
+  { match: "self.layer_norm1 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)", title: "LayerNorm, eps = 1e-6", text: <>SigLIP LayerNorm kullanıyor (ortalama + varyans + γ, β). Gemma RMSNorm kullanıyor (<Link to="/gemma/rmsnorm">4.4</Link>). eps PyTorch varsayılanı (1e-5) değil, 1e-6.</> },
+  { match: "residual = hidden_states", title: "pre-norm", text: <>Gemma'daki desenin aynısı: residual norm'dan <b>önce</b> saklanıyor (<Link to="/gemma/akis">4.2</Link>).</> },
+  { match: "hidden_states = self.mlp(hidden_states)", title: "MLP", text: <>fc1 (1152 → 4304) → gelu_tanh → fc2. Kapısız, klasik MLP. GeGLU ile karşılaştırma: <Link to="/gemma/geglu">4.5</Link>.</> },
 ]} />
 
 <Fig caption={<><b>Senin SigLIP'inden geçen bir tabela (siglip-base).</b> Akış katmanlar boyunca büyüyor. <code>post_layernorm</code> en sonda tek kez normalize ediyor.</>}>
@@ -70,7 +70,7 @@ Multi-head attention'ı anlamak için tensör şekillerini izlemek yetiyor. Aşa
 ## Kavram soruları
 
 <ConceptQ n={1} q="Pre-norm (LN residual'dan önce) ile post-norm farkı ne? SigLIP hangisini kullanıyor? Sonda neden ayrıca bir post_layernorm var?">
-Post-norm: <span className="mono">x = LN(x + f(x))</span>. Pre-norm: <span className="mono">x = x + f(LN(x))</span>. SigLIP (ve Gemma) pre-norm kullanıyor: akış hiç normalize edilmiyor ve kimlik yolu kesintisiz kalıyor. Bu, derin modellerde gradyanı korur (<Link to="/gemma/akis">5.1</Link>). Bedeli şu: son katmanın çıktısı normalize edilmemiş, büyümüş bir akış (yukarıdaki grafik). <code>post_layernorm</code> bunu tek seferde normalize ediyor.
+Post-norm: <span className="mono">x = LN(x + f(x))</span>. Pre-norm: <span className="mono">x = x + f(LN(x))</span>. SigLIP (ve Gemma) pre-norm kullanıyor: akış hiç normalize edilmiyor ve kimlik yolu kesintisiz kalıyor. Bu, derin modellerde gradyanı korur (<Link to="/gemma/akis">4.2</Link>). Bedeli şu: son katmanın çıktısı normalize edilmemiş, büyümüş bir akış (yukarıdaki grafik). <code>post_layernorm</code> bunu tek seferde normalize ediyor.
 </ConceptQ>
 <ConceptQ n={2} q="Burada attention maskesi neden yok? Hafta 7–8'deki tril neden buraya uymaz?">
 <code>tril</code> (causal maske) dil modelinde geleceği gizlemek için: bir token'ı üretirken sonrakileri görmemeli. Görüntüde "gelecek" yok. 256 yama aynı anda var ve bir yamanın anlamı her yönden komşularına bağlı (bir harfin üstü ve altı). Causal maske uygulasan sol üstteki yama sağ alttakini hiç göremezdi.

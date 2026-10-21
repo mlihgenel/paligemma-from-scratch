@@ -1,4 +1,4 @@
-// Bölüm 1: kontrastif kayıp (softmax ve sigmoid) ve çözünürlüğün maliyeti
+// Bölüm 2.1: kontrastif kayıp (softmax ve sigmoid) ve çözünürlüğün maliyeti
 import { useMemo, useState } from "react";
 import { useData } from "../../lib/data";
 import { rng, sigmoid } from "../../lib/tensor";

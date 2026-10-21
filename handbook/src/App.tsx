@@ -1,8 +1,8 @@
 import { Suspense, useEffect, useState } from "react";
-import { HashRouter, Link, Route, Routes, useLocation } from "react-router-dom";
+import { HashRouter, Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { MDXProvider } from "@mdx-js/react";
-import { PAGES, Page } from "./registry";
-import { PipelineMinimap } from "./components/PipelineMinimap";
+import { PAGES, PART_TITLE, Page, Part, REDIRECTS, partVars } from "./registry";
+import { ArchDiagram } from "./interact/ArchDiagram";
 import { useStore } from "./store";
 
 function useEffectiveTheme() {
@@ -49,12 +49,15 @@ function TopBar({ page, onToc }: { page: Page; onToc: () => void }) {
 }
 
 function Toc({ current, onClose }: { current: Page; onClose: () => void }) {
-  const chapters = [...new Set(PAGES.map((p) => p.chapter))];
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
   }, [onClose]);
+  const groups: { part: Part | null; title: string; pages: Page[] }[] = [
+    { part: null, title: "Başlangıç", pages: PAGES.filter((p) => p.part === null) },
+    ...(["vision", "bridge", "lang"] as Part[]).map((part) => ({ part, title: PART_TITLE[part], pages: PAGES.filter((p) => p.part === part) })),
+  ];
   return (
     <>
       <div className="toc-backdrop" onClick={onClose} />
@@ -63,21 +66,13 @@ function Toc({ current, onClose }: { current: Page; onClose: () => void }) {
           <div style={{ fontFamily: "var(--display)", fontWeight: 700, fontSize: 20 }}>İçindekiler</div>
           <button className="icon-btn" onClick={onClose}>Kapat ✕</button>
         </div>
-        <h2>Mimaride konum</h2>
-        <PipelineMinimap active={current.active} vertical onNavigate={onClose} />
-        {chapters.map((c) => (
-          <div key={c}>
-            <h2>{c}</h2>
-            {PAGES.filter((p) => p.chapter === c).map((p) => (
-              p.Component ? (
-                <Link key={p.path} to={p.path} onClick={onClose} className={"item" + (p === current ? " active" : "")}>
-                  <span className="n">{p.num}</span><span>{p.title}</span><span />
-                </Link>
-              ) : (
-                <span key={p.path} className="item disabled" style={{ display: "grid", gridTemplateColumns: "44px 1fr auto", gap: 8, padding: "7px 0", color: "var(--fg-faint)" }}>
-                  <span className="mono" style={{ fontSize: 12.5 }}>{p.num}</span><span>{p.title}</span><span style={{ fontSize: 12 }}>yakında</span>
-                </span>
-              )
+        {groups.map((g) => (
+          <div key={g.title} className="toc-part" style={partVars(g.part)}>
+            <h2>{g.title}</h2>
+            {g.pages.map((p) => (
+              <Link key={p.path} to={p.path} onClick={onClose} className={"item" + (p === current ? " active" : "")}>
+                <span className="n">{p.num || "·"}</span><span className="t">{p.title}</span><span className="b">{p.blurb}</span>
+              </Link>
             ))}
           </div>
         ))}
@@ -93,30 +88,23 @@ function PageView({ page }: { page: Page }) {
     if (hash) setTimeout(() => document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: "smooth" }), 300);
     else window.scrollTo(0, 0);
   }, [pathname, hash]);
-  const ready = PAGES.filter((p) => p.Component);
-  const ri = ready.indexOf(page);
-  const prev = ri > 0 ? ready[ri - 1] : null;
-  const next = ri >= 0 && ri < ready.length - 1 ? ready[ri + 1] : null;
+  const ri = PAGES.indexOf(page);
+  const prev = ri > 0 ? PAGES[ri - 1] : null;
+  const next = ri < PAGES.length - 1 ? PAGES[ri + 1] : null;
   return (
     <>
       <TopBar page={page} onToc={() => setToc(true)} />
       {toc && <Toc current={page} onClose={() => setToc(false)} />}
-      <main className="page">
+      <main className="page" style={partVars(page.part)}>
         {page.num && (
           <div className="page-head">
             <div className="num">{page.num}</div>
-            <div className="kicker">{page.chapter}</div>
+            <div className="kicker">{page.part ? PART_TITLE[page.part] : "Başlangıç"}</div>
           </div>
         )}
+        {page.arch.length > 0 && <ArchDiagram variant="mini" active={page.arch} />}
         <article className="prose" style={{ ["--chap" as any]: page.num ? `"${page.num}."` : '""' }}>
-          {page.Component ? (
-            <Suspense fallback={<div className="muted">Yükleniyor…</div>}><page.Component /></Suspense>
-          ) : (
-            <>
-              <h1>{page.title}</h1>
-              <p className="lead">Bu bölüm sonraki fazda yazılacak.</p>
-            </>
-          )}
+          <Suspense fallback={<div className="muted">Yükleniyor…</div>}><page.Component /></Suspense>
         </article>
         <nav className="pager">
           {prev ? <Link to={prev.path}><span className="lbl">← Önceki</span><span className="t">{prev.num} {prev.title}</span></Link> : <span />}
@@ -138,6 +126,8 @@ export default function App() {
       <MDXProvider components={mdxComponents}>
         <Routes>
           {PAGES.map((p) => <Route key={p.path} path={p.path} element={<PageView page={p} />} />)}
+          {Object.entries(REDIRECTS).map(([from, to]) => <Route key={from} path={from} element={<Navigate to={to} replace />} />)}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </MDXProvider>
     </HashRouter>

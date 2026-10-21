@@ -1,4 +1,4 @@
-// Oyun alanı durakları: her durakta şekil, dtype, sınıf, kod satırı ve bölüm linki.
+// Uçtan uca durakları: her durakta şekil, dtype, sınıf, kod satırı ve bölüm linki.
 import { ReactNode } from "react";
 
 export const N = 16;
@@ -33,7 +33,7 @@ export const STAGES: StageDef[] = [
     note: <>Tek bir Linear (bias'lı). Görsel token'lar dil modelinin boyutuna taşınıyor.</> },
   { key: "div", title: "÷ √2048", z: -5.6, shape: (d) => [1, d.P, d.D], ax: "B,T,D", dtype: "float32", cls: "_merge_input_ids_with_image_features", code: ["paligemma.py", "scaled_image_features = image_features /"], to: "/gemma/sqrt-d",
     note: <>Gemma birazdan bütün diziyi ×√2048 yapacak. Görsel token'lar bundan etkilenmesin diye önce bölünüyor.</> },
-  { key: "merge", title: "Metin + görüntü birleşiyor", z: -7.6, shape: (d, T) => [1, T, d.D], ax: "B,T,D", dtype: "float32", cls: "masked_scatter", code: ["paligemma.py", "final_embedding = final_embedding.masked_scatter"], to: "/hepsi#birlestirme",
+  { key: "merge", title: "Metin + görüntü birleşiyor", z: -7.6, shape: (d, T) => [1, T, d.D], ax: "B,T,D", dtype: "float32", cls: "masked_scatter", code: ["paligemma.py", "final_embedding = final_embedding.masked_scatter"], to: "/kopru#birlestirme",
     note: <>Prompt token'ları embedding tablosundan geliyor (yeşil), &lt;image&gt; konumlarına görsel özellikler sırayla yazılıyor.</> },
   { key: "scale", title: "× √2048", z: -7.6, shape: (d, T) => [1, T, d.D], ax: "B,T,D", dtype: "float32", cls: "GemmaModel.forward", code: ["gemma.py", "hidden_states = hidden_states * normalizer"], to: "/gemma/sqrt-d",
     note: <>Bütün dizi 45.25 ile çarpılıyor. Görsel token'lar için net etki ×1, metin token'ları 45 kat büyüyor.</> },

@@ -29,6 +29,12 @@
   --ax-hd: #d4558a;
   --ax-C: #8d8a82;
   --ax-P: #2a78d6;
+  --part-vision: #3f8f5a;
+  --part-vision-soft: #edf6f0;
+  --part-bridge: #b7791f;
+  --part-bridge-soft: #faf1e1;
+  --part-lang: #7356c9;
+  --part-lang-soft: #f2eefc;
   --code-bg: #f5f3ee;
   --stage-bg: #f4f2ed;
   --shadow: none;
@@ -70,6 +76,12 @@
   --ax-hd: #d55181;
   --ax-C: #9c998f;
   --ax-P: #3987e5;
+  --part-vision: #5fbf80;
+  --part-vision-soft: #17261c;
+  --part-bridge: #d9a24a;
+  --part-bridge-soft: #2b2213;
+  --part-lang: #a28ef2;
+  --part-lang-soft: #221e36;
   --code-bg: #1a1a1d;
   --stage-bg: #1a1a1d;
   color-scheme: dark;

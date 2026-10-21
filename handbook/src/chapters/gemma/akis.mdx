@@ -26,7 +26,7 @@ Bu satırın iki önemli sonucu var.
 
 ## Bir token'ın vektörünü takip et
 
-<Scrolly label="Residual akışı, tek bir token" figure={(s) => <HighwayScene step={s} />}>
+<Scrolly label="Residual akışı, tek bir token" figure={(s, p) => <HighwayScene step={s} progress={p} />}>
 <Step>
 **Akış.** Mavi çubuklar bir token'ın vektörü: her çubuk bir boyut, yüksekliği değeri. Bu vektör embedding × √d olarak şeride giriyor. Şerit `hidden_states` değişkeni, yani otoyol. Çubukların üstüne gelince değerleri görünür.
 </Step>
@@ -54,8 +54,8 @@ Bu satırın iki önemli sonucu var.
   { match: "self.input_layernorm(hidden_states)", title: "Dal: norm", text: <>Bu satırdan sonra <code>hidden_states</code> artık akışın kendisi değil, normalize edilmiş bir kopya. Akış <code>residual</code> değişkeninde bekliyor. Şekil değişmiyor: <S s="B, T, D" />.</> },
   { match: "self.self_attn(hidden_states)", title: "Dal: attention (şimdilik Identity)", text: <>Attention yazılınca token'lar arası bilgi buradan geçecek. Şu an <code>nn.Identity</code>, kopyayı aynen döndürüyor. Yani bu blok şu an <code>h + norm(h)</code> hesaplıyor. Bu sayfanın deneylerinde attention yerine <code>check_gemma.py</code>'deki gibi rastgele bir linear katman var.</> },
   { match: "hidden_states = residual + hidden_states", title: "Yazma: akışa ekle", text: <>Otoyolun ⊕ noktası. Dalın çıktısı akışa toplanıyor. İki tensör de <S s="B, T, D" />, eleman eleman toplama.</> },
-  { match: "self.post_attention_layernorm(hidden_states)", title: "İkinci dal: norm", text: <>Aynı desen, bu kez MLP için. Adı yanıltıcı: "post attention" denmesinin nedeni attention'dan <i>sonra</i> gelmesi, ama aslında MLP'nin <i>girişindeki</i> norm. Bkz. <Link to="/gemma/katman">5.5</Link>.</> },
-  { match: "hidden_states = self.mlp(hidden_states)", title: "Dal: MLP", text: <>GeGLU. Her token ayrı işleniyor. Bkz. <Link to="/gemma/geglu">5.4</Link>.</> },
+  { match: "self.post_attention_layernorm(hidden_states)", title: "İkinci dal: norm", text: <>Aynı desen, bu kez MLP için. Adı yanıltıcı: "post attention" denmesinin nedeni attention'dan <i>sonra</i> gelmesi, ama aslında MLP'nin <i>girişindeki</i> norm. Bkz. <Link to="/gemma/katman">4.6</Link>.</> },
+  { match: "hidden_states = self.mlp(hidden_states)", title: "Dal: MLP", text: <>GeGLU. Her token ayrı işleniyor. Bkz. <Link to="/gemma/geglu">4.5</Link>.</> },
   { match: "return hidden_states", title: "Çıkış", text: <>Girişle aynı şekil <S s="B, T, D" />. Bir sonraki katman bunu aynen alıyor. 18 katman böyle zincirleniyor.</> },
 ]} />
 

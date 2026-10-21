@@ -43,7 +43,7 @@ Sağda forward'ın kodu, altında akış şeması. Kaydırdıkça aktif satır i
 <Step>`residual + hidden_states`: dal çıktısı akışa **toplanıyor**. `hidden_states` yeniden akışın kendisi oldu, ama güncellenmiş haliyle.</Step>
 <Step>MLP bloğu için aynı desen: önce akış yeniden `residual`'a.</Step>
 <Step>`post_attention_layernorm`: adına rağmen MLP'nin **girişindeki** norm.</Step>
-<Step>`mlp`: GeGLU. Token'lar arası karışma yok (<Link to="/gemma/geglu">5.4</Link>).</Step>
+<Step>`mlp`: GeGLU. Token'lar arası karışma yok (<Link to="/gemma/geglu">4.5</Link>).</Step>
 <Step>İkinci toplama. Çıkış girişle aynı şekilde, bir sonraki katmana hazır.</Step>
 </Scrolly>
 
@@ -80,5 +80,5 @@ hf.post_attention_layernorm.weight.normal_()
 </Fig>
 
 <Impact from="gemma.py: GemmaDecoderLayer" to="attention eklenince: forward(hidden_states, attention_mask, position_ids)">
-Attention gelince <code>forward</code> imzası değişecek ve <code>GemmaModel.forward</code>'daki döngü bu argümanları her katmana geçirecek. <Link to="/gemma/model">5.6</Link>'da neden <code>nn.Sequential</code> değil <code>nn.ModuleList</code> kullandığımızın nedeni bu.
+Attention gelince <code>forward</code> imzası değişecek ve <code>GemmaModel.forward</code>'daki döngü bu argümanları her katmana geçirecek. <Link to="/gemma/model">4.7</Link>'da neden <code>nn.Sequential</code> değil <code>nn.ModuleList</code> kullandığımızın nedeni bu.
 </Impact>
