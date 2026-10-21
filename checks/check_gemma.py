@@ -5,6 +5,7 @@ yani her yeni sınıfı yazdıkça script'i yeniden çalıştırabilirsin:
 
     GemmaRMSNorm       -> HF GemmaRMSNorm (float32 ve bfloat16 girdiyle)
     GemmaMLP           -> HF GemmaMLP
+    GemmaRotaryEmbedding -> HF GemmaRotaryEmbedding + apply_rotary_pos_emb (cos/sin ve döndürülmüş Q/K)
     GemmaDecoderLayer  -> HF GemmaDecoderLayer (attention yerine iki tarafta da aynı geçici modül)
     GemmaModel         -> HF GemmaModel (embedding ölçeği + bütün katmanlar + son norm)
     GemmaForCausalLM   -> HF GemmaForCausalLM (logit'ler ve weight tying)
@@ -26,6 +27,8 @@ from torch import nn
 from transformers.models.gemma.modeling_gemma import GemmaDecoderLayer as HFGemmaDecoderLayer
 from transformers.models.gemma.modeling_gemma import GemmaMLP as HFGemmaMLP
 from transformers.models.gemma.modeling_gemma import GemmaRMSNorm as HFGemmaRMSNorm
+from transformers.models.gemma.modeling_gemma import GemmaRotaryEmbedding as HFGemmaRotaryEmbedding
+from transformers.models.gemma.modeling_gemma import apply_rotary_pos_emb as hf_apply_rotary_pos_emb
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -104,6 +107,31 @@ def check_mlp():
     x = torch.randn(B, T, SMALL["hidden_size"])
     with torch.no_grad():
         return compare("GemmaMLP", ours(x), hf(x))
+
+
+def check_rope():
+    hf_config = HFGemmaConfig(**SMALL, hidden_act="gelu_pytorch_tanh")
+    hf = HFGemmaRotaryEmbedding(hf_config)
+    ours = gemma.GemmaRotaryEmbedding(SMALL["head_dim"], base=hf_config.rope_parameters["rope_theta"])
+    # Buffer olduğu için copy_weights yok: frekansları kendimiz hesaplıyoruz, aynı çıkmalı
+    ok_freq = compare("RoPE inv_freq", ours.inv_freq, hf.inv_freq)
+
+    # Konumlar 0'dan başlamak zorunda değil (KV cache'te üretilen token 260. konumda olacak)
+    position_ids = torch.arange(T).unsqueeze(0).expand(B, -1) + torch.tensor([[0], [300]])
+    q = torch.randn(B, SMALL["num_attention_heads"], T, SMALL["head_dim"])
+    k = torch.randn(B, SMALL["num_key_value_heads"], T, SMALL["head_dim"])
+    cos, sin = ours(q, position_ids)
+    hf_cos, hf_sin = hf(q, position_ids)
+    ok_cs = compare("RoPE cos", cos, hf_cos) & compare("RoPE sin", sin, hf_sin)
+
+    q_ours, k_ours = gemma.apply_rotary_pos_emb(q, k, cos, sin)
+    q_hf, k_hf = hf_apply_rotary_pos_emb(q, k, hf_cos, hf_sin)
+    ok_qk = compare("RoPE döndürülmüş Q", q_ours, q_hf) & compare("RoPE döndürülmüş K", k_ours, k_hf)
+
+    # Döndürme vektörün uzunluğunu değiştirmemeli: sadece yön değişiyor
+    norm_kept = torch.allclose(q_ours.norm(dim=-1), q.norm(dim=-1), atol=ATOL)
+    print(f"[{'OK ' if norm_kept else 'HATA'}] RoPE vektör uzunluğu korunuyor")
+    return bool(ok_freq and ok_cs and ok_qk and norm_kept)
 
 
 class StubAttention(nn.Module):
@@ -222,6 +250,7 @@ def main():
     checks = [
         ("GemmaRMSNorm", check_rmsnorm),
         ("GemmaMLP", check_mlp),
+        ("GemmaRotaryEmbedding", check_rope),
         ("GemmaDecoderLayer", check_decoder_layer),
         ("GemmaModel", check_model),
         ("GemmaForCausalLM", check_causal_lm),

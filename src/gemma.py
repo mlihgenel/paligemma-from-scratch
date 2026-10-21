@@ -59,7 +59,54 @@ class GemmaMLP(nn.Module):
         # Aktivasyon sadece gate'e. Gemma tanh yaklaşımıyla eğitildi, düz gelu allclose'u bozar
         h = F.gelu(gate, approximate="tanh") * up   # [B, T, I], eleman eleman çarpım
         return self.down_proj(h)                    # [B, T, I] -> [B, T, D]
-        
+
+
+# RoPE: konum bilgisi embedding'e eklenmiyor, Q ve K vektörleri konuma göre döndürülüyor.
+# head_dim boyutlu vektör head_dim/2 tane 2 boyutlu çifte ayrılıyor, her çift kendi hızında dönüyor:
+# çift i, m. konumda m * theta_i açısı kadar. theta_i = base^(-2i/head_dim): ilk çiftler hızlı, son çiftler yavaş
+class GemmaRotaryEmbedding(nn.Module):
+    def __init__(self, dim: int, base: float = 10000.0):
+        super().__init__()
+        self.dim = dim
+        self.base = base
+        # [head_dim/2] frekans. Öğrenilen bir şey değil, sabit: persistent=False ile state_dict'e girmiyor
+        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.float) / self.dim))
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+
+    # Sadece cos/sin tablosunu üretiyor, Q/K'ye dokunmuyor. x'ten yalnızca dtype ve device alınıyor
+    @torch.no_grad()
+    def forward(self, x: torch.Tensor, position_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        # Açılar float32'de: konum 8000 gibi büyük sayılara çıkınca bf16'da açı yanlış hesaplanır
+        # [B, T, 1] * [head_dim/2] -> [B, T, head_dim/2], freqs[b, m, i] = m * theta_i
+        freqs = position_ids[..., None].float() * self.inv_freq.to(x.device)
+        # Aynı açı iki kez: rotate_half çiftleri (i, i + head_dim/2) olarak eşlediği için ikinci yarıya da lazım
+        emb = torch.cat((freqs, freqs), dim=-1)                   # [B, T, head_dim]
+        return emb.cos().to(x.dtype), emb.sin().to(x.dtype)
+
+
+# Makaledeki 2B döndürme: (a, b) -> (a cos - b sin, b cos + a sin).
+# Çiftler komşu (0,1), (2,3)... değil, ilk yarı ile ikinci yarı: (x_0, x_{d/2}), (x_1, x_{d/2+1})...
+# rotate_half(x) = [-x2, x1] -> x * cos + rotate_half(x) * sin bu döndürmeyi bütün çiftlere aynı anda uyguluyor
+def rotate_half(x: torch.Tensor) -> torch.Tensor:
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+def apply_rotary_pos_emb(
+    q: torch.Tensor,    # [B, n_heads, T, head_dim]
+    k: torch.Tensor,    # [B, n_kv_heads, T, head_dim]
+    cos: torch.Tensor,  # [B, T, head_dim]
+    sin: torch.Tensor,  # [B, T, head_dim]
+) -> tuple[torch.Tensor, torch.Tensor]:
+    # Head boyutu ekleniyor: [B, 1, T, head_dim], her head aynı konumda aynı açıyla dönüyor
+    cos = cos.unsqueeze(1)
+    sin = sin.unsqueeze(1)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
+
+
 # Pre-norm katman: x = x + attn(norm(x)), sonra x = x + mlp(norm(x)). Residual akışının kendisi hiç normalize edilmiyor
 class GemmaDecoderLayer(nn.Module): 
     def __init__(self, config: GemmaConfig, layer_idx: int):
