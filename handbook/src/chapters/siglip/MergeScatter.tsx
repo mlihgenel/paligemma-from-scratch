@@ -1,4 +1,4 @@
-// Bölüm 6: _merge_input_ids_with_image_features, hücre hücre ve eleman takibiyle.
+// Bölüm 3: _merge_input_ids_with_image_features, hücre hücre ve eleman takibiyle.
 import { ReactNode } from "react";
 import { rng } from "../../lib/tensor";
 import { useWidth } from "../../components/charts";

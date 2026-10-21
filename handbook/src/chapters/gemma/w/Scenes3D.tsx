@@ -1,6 +1,7 @@
-// R3: Bölüm 5'in 3D scrolly sahneleri. Hepsi interact/three (Stage3D + instanced Cubes) üzerinde.
+// R3: Bölüm 4'in 3D scrolly sahneleri. Hepsi interact/three (Stage3D + instanced Cubes) üzerinde.
 // Kural: her adımda tek bir şey hareket eder; geri kalanı yerinde ve soluk durur.
 import { ReactNode, useMemo } from "react";
+import * as THREE from "three";
 import { rng, geluTanh } from "../../../lib/tensor";
 import { Stage3D, Cubes, Cube, Tag, View, cssColor } from "../../../interact/three";
 import { valueColor } from "../../../interact/cells";
@@ -22,9 +23,52 @@ function barItems(prefix: string, vals: number[], at: [number, number, number], 
   });
 }
 
-/* ------------------------------------------------------------------ 5.1 Otoyol */
+/* ------------------------------------------------------------------ 4.2 Otoyol */
 const HD = 10;
-export function HighwayScene({ step }: { step: number }) {
+const smooth = (x: number) => { const k = Math.min(1, Math.max(0, x)); return k * k * (3 - 2 * k); };
+const mix = (a: number[], b: number[], k: number) => a.map((v, i) => v + (b[i] - v) * k);
+
+// Yan yol: otoyoldan kalkıp norm ve f bloklarından geçen, ⊕'de otoyola inen eğri
+const BR = [
+  { from: -5.2, norm: -4.0, f: -2.2, add: -1.0, kind: "attn" as const },
+  { from: 0.4, norm: 1.6, f: 3.4, add: 4.6, kind: "mlp" as const },
+];
+const BY = 2.1;
+function branchCurve(b: (typeof BR)[number]) {
+  return new THREE.CatmullRomCurve3([
+    new THREE.Vector3(b.from, 0.05, 0), new THREE.Vector3(b.from + 0.55, 1.1, 0), new THREE.Vector3(b.norm, BY, 0),
+    new THREE.Vector3((b.norm + b.f) / 2, BY, 0), new THREE.Vector3(b.f, BY, 0), new THREE.Vector3(b.add - 0.55, 1.1, 0), new THREE.Vector3(b.add, 0.05, 0),
+  ], false, "centripetal");
+}
+// eğri üzerinde norm bloğu ≈ 0.33, f bloğu ≈ 0.67
+const T_NORM = 0.33, T_F = 0.67;
+
+function Road({ curve, color, on }: { curve: THREE.Curve<THREE.Vector3>; color: string; on: boolean }) {
+  const geo = useMemo(() => new THREE.TubeGeometry(curve, 80, 0.045, 8, false), [curve]);
+  return <mesh geometry={geo}><meshStandardMaterial color={color} transparent opacity={on ? 0.55 : 0.18} /></mesh>;
+}
+
+function Block({ x, color, on, w = 1.3 }: { x: number; color: string; on: boolean; w?: number }) {
+  return (
+    <mesh position={[x, BY - 0.02, 0]}>
+      <boxGeometry args={[w, 0.08, 1.0]} />
+      <meshStandardMaterial color={color} transparent opacity={on ? 0.75 : 0.22} />
+    </mesh>
+  );
+}
+
+function AddNode({ x, on }: { x: number; on: boolean }) {
+  const col = cssColor("--accent");
+  return (
+    <group position={[x, 0.02, 0.75]}>
+      <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[0.2, 0.035, 10, 32]} /><meshBasicMaterial color={col} transparent opacity={on ? 1 : 0.35} /></mesh>
+      <mesh><boxGeometry args={[0.24, 0.035, 0.035]} /><meshBasicMaterial color={col} transparent opacity={on ? 1 : 0.35} /></mesh>
+      <mesh rotation={[0, Math.PI / 2, 0]}><boxGeometry args={[0.24, 0.035, 0.035]} /><meshBasicMaterial color={col} transparent opacity={on ? 1 : 0.35} /></mesh>
+    </group>
+  );
+}
+
+export function HighwayScene({ step, progress = 0 }: { step: number; progress?: number }) {
   const v = useMemo(() => {
     const r = rng(21);
     const h0 = Array.from({ length: HD }, () => r.normal() * 1.5);
@@ -35,52 +79,63 @@ export function HighwayScene({ step }: { step: number }) {
     for (let k = 2; k < 6; k++) hl = hl.map((a, i) => a + u[k][i]);
     return { h0, u, h1, h2, hl };
   }, []);
+  const curves = useMemo(() => BR.map(branchCurve), []);
   const T = cssColor("--ax-T"), D = cssColor("--ax-D"), N = cssColor("--ax-hd"), F = cssColor("--fg-faint");
-  const K = 0.3;
-  const xs = [-3.2, 1.6];                        // attn ve mlp dallarının merkezi
-  const addX = [-0.8, 4.0];
-  const endX = 6.6;
-  const PW = 1.5;                                // levha genişliği (vektör sığsın)
-  const stream = step === 0 ? v.h0 : step <= 2 ? v.h0 : step === 3 ? v.h1 : step === 4 ? v.h2 : v.hl;
-  const streamX = step === 0 ? -6.2 : step <= 2 ? -5.6 : step === 3 ? addX[0] : step === 4 ? addX[1] : endX;
-  const items: Cube[] = [];
-  // sabit yapılar: şerit, norm ve f levhaları, ⊕ noktaları
-  items.push({ id: "lane", pos: [0.2, -0.04, 0], size: [15.4, 0.05, 1.2], color: cssColor("--border-strong") });
-  ["attn", "mlp"].forEach((kind, k) => {
-    items.push({ id: `nb${k}`, pos: [xs[k] - 0.9, 2.0, 0], size: [PW, 0.05, 0.9], color: N, dim: !(step === 1 && k === 0) && !(step === 4 && k === 1) });
-    items.push({ id: `fb${k}`, pos: [xs[k] + 0.9, 2.0, 0], size: [PW, 0.05, 0.9], color: kind === "attn" ? F : D, dim: !(step === 2 && k === 0) && !(step === 4 && k === 1) });
-    items.push({ id: `add${k}`, pos: [addX[k], 0.02, 0], size: [1.6, 0.07, 1.3], color: cssColor("--accent"), dim: !(step === 3 && k === 0) && !(step === 4 && k === 1) });
-  });
-  items.push({ id: "fn", pos: [endX, 2.0, 0], size: [PW, 0.05, 0.9], color: N, dim: step !== 5 });
-  // akış vektörü
-  const sRms = rmsOf(stream);
-  items.push(...barItems("s", stream, [streamX, 0, 0], T, K, { tip: (i) => <>akış h[{i}] = <b>{fx(stream[i])}</b><div className="muted">‖h‖ rms = {fx(sRms, 2)}</div></> }));
-  // dalın norm'lu kopyası
-  const src = step === 4 ? v.h1 : step === 5 ? v.hl : v.h0;
-  const normed = src.map((a) => a / rmsOf(src));
-  const copyX = step === 4 ? xs[1] - 0.9 : step === 5 ? endX : xs[0] - 0.9;
-  const showCopy = step === 1 || step === 4 || step === 5;
-  items.push(...barItems("c", normed, showCopy ? [copyX, 2.06, 0] : [streamX, 0, 0], N, K, { hidden: !showCopy, tip: (i) => <>norm'lu kopya[{i}] = <b>{fx(normed[i])}</b><div className="muted">rms = 1.00, akışın ölçeğinden bağımsız</div></> }));
-  // güncelleme (dalın çıktısı)
-  const uk = step === 4 ? v.u[1] : v.u[0];
-  const upd = step === 2 ? [xs[0] + 0.9, 2.06, 0] : step === 3 ? [addX[0], 1.25, 0] : step === 4 ? [addX[1], 1.25, 0] : [xs[0] + 0.9, 2.06, 0];
-  items.push(...barItems("u", uk, upd as any, D, K, { hidden: !(step >= 2 && step <= 4), tip: (i) => <>güncelleme f(norm(h))[{i}] = <b>{fx(uk[i])}</b><div className="muted">akışa eklenecek</div></> }));
+  const K = 0.4, endX = 6.6;
+  const p = progress;
+  const norm = (a: number[]) => { const r = rmsOf(a); return a.map((x) => x / r); };
 
-  const cx = [-5.0, -3.6, -2.4, -1.6, 2.2, 1.0][Math.min(step, 5)];
-  const view: View = step === 5 ? { pos: [3.0, 3.0, 10.5], target: [2.4, 0.9, 0] } : { pos: [cx + 0.6, 2.6, 7.4], target: [cx, 1.0, 0] };
-  const tag = (x: number, y: number, txt: ReactNode, color: string, on: boolean) => <Tag position={[x, y, 0]} color={color} size={11.5} weight={on ? 650 : 500}>{txt}</Tag>;
+  // Her adımda paketlerin yeri ve değerleri, adım içi ilerlemeye (p) göre sürekli
+  // akış paketi
+  let sx = -6.4, sv = v.h0;
+  // dal paketi: eğri üzerindeki konum (ct), değerleri (cv), rengi
+  let ct = -1, cv = v.h0, cCol = N, b = 0;
+  if (step === 0) sx = -6.6 + 1.2 * smooth(p);
+  else if (step === 1) { sx = -5.4; ct = T_NORM * smooth(p * 1.3); cv = mix(v.h0, norm(v.h0), smooth((p - 0.45) * 2.5)); }
+  else if (step === 2) { sx = -5.4; ct = T_NORM + (T_F - T_NORM) * smooth(p * 1.3); cv = mix(norm(v.h0), v.u[0], smooth((p - 0.45) * 2.5)); cCol = smooth((p - 0.45) * 2.5) > 0.5 ? D : N; }
+  else if (step === 3) {
+    const go = smooth(p * 1.6), merge = smooth((p - 0.6) * 2.5);
+    sx = -5.4 + (BR[0].add - -5.4) * go; ct = merge >= 1 ? -1 : T_F + (1 - T_F) * go; cv = v.u[0]; cCol = D;
+    sv = mix(v.h0, v.h1, merge);
+  } else if (step === 4) {
+    const a = smooth(p * 3), c = smooth((p - 0.33) * 3), d = smooth((p - 0.66) * 3), merge = smooth((p - 0.82) * 5.5);
+    sx = BR[0].add + (BR[1].from - BR[0].add) * a + (BR[1].add - BR[1].from) * d;
+    b = 1; sv = mix(v.h1, v.h2, merge);
+    ct = merge >= 1 ? -1 : p < 0.33 ? T_NORM * a : p < 0.66 ? T_NORM + (T_F - T_NORM) * c : T_F + (1 - T_F) * d;
+    cv = p < 0.33 ? mix(v.h1, norm(v.h1), a) : p < 0.66 ? mix(norm(v.h1), v.u[1], c) : v.u[1];
+    cCol = p < 0.5 ? N : D;
+  } else { sx = BR[1].add + (endX - BR[1].add) * smooth(p * 1.4); sv = mix(v.h2, v.hl, smooth(p * 1.4)); }
+  const onBranch = ct >= 0;
+  const cp = onBranch ? curves[b].getPointAt(Math.min(1, ct)) : new THREE.Vector3(sx, 0, 0);
+
+  const items: Cube[] = [];
+  items.push({ id: "lane", pos: [0, -0.04, 0], size: [14.6, 0.05, 1.1], color: cssColor("--border-strong") });
+  const sRms = rmsOf(sv);
+  items.push(...barItems("s", sv, [sx, 0, 0], T, K, { tip: (i) => <>akış h[{i}] = <b>{fx(sv[i])}</b><div className="muted">rms = {fx(sRms, 2)}</div></> }));
+  items.push(...barItems("c", cv, [cp.x, cp.y + 0.06, 0.25], cCol, K, { hidden: !onBranch, tip: (i) => <>dal paketi[{i}] = <b>{fx(cv[i])}</b><div className="muted">rms = {fx(rmsOf(cv), 2)}</div></> }));
+
+  const live = (k: number) => (step >= 1 && step <= 3 && k === 0) || (step === 4 && k === 1);
+  // Kamera: dal adımlarında o dala, sonda bütün katmana
+  const cx = step <= 3 ? -3.4 : step === 4 ? 2.0 : 0.2;
+  const view: View = step === 5 ? { pos: [0.6, 4.2, 12.4], target: [0.2, 0.8, 0] } : { pos: [cx + 0.3, 2.9, 6.9], target: [cx, 0.95, 0] };
+  const label = (x: number, y: number, txt: ReactNode, color: string, on: boolean, z = 0) => <Tag position={[x, y, z]} color={color} size={on ? 12.5 : 11.5} weight={on ? 700 : 500}>{txt}</Tag>;
   return (
-    <Stage3D view={view} height={460}>
+    <Stage3D view={view} height={480} maxDist={30}>
       <Cubes items={items} />
-      <Tag position={[-6.6, -0.42, 0.8]} color="var(--ax-T)" size={12}>akış (hidden_states)</Tag>
-      {tag(xs[0] - 0.9, 2.4, "input_layernorm", "var(--ax-hd)", step === 1)}
-      {tag(xs[0] + 0.9, 2.4, "self_attn (Identity)", "var(--fg-muted)", step === 2)}
-      {tag(xs[1] - 0.9, 2.4, "post_attention_layernorm", "var(--ax-hd)", step === 4)}
-      {tag(xs[1] + 0.9, 2.4, "mlp", "var(--ax-D)", step === 4)}
-      {tag(addX[0], -0.42, "⊕ residual + …", "var(--accent)", step === 3)}
-      {tag(addX[1], -0.42, "⊕ residual + …", "var(--accent)", step === 4)}
-      {tag(endX, 2.4, "model.norm", "var(--ax-hd)", step === 5)}
-      {step === 5 && <Tag position={[endX - 1.3, -0.42, 0.8]} color="var(--fg-muted)" size={11.5}>… 18 katman sonra</Tag>}
+      {BR.map((br, k) => (
+        <group key={k}>
+          <Road curve={curves[k]} color={k === 0 ? F : D} on={live(k)} />
+          <Block x={br.norm} color={N} on={live(k)} />
+          <Block x={br.f} color={br.kind === "attn" ? F : D} on={live(k)} />
+          <AddNode x={br.add} on={(step === 3 && k === 0) || (step === 4 && k === 1)} />
+          {label(br.norm, BY + 0.45, k === 0 ? "input_layernorm" : "post_attention_layernorm", "var(--ax-hd)", (step === 1 && k === 0) || (step === 4 && k === 1))}
+          {label(br.f, BY + 0.45, k === 0 ? "self_attn (şimdilik Identity)" : "mlp", k === 0 ? "var(--fg-muted)" : "var(--ax-D)", (step === 2 && k === 0) || (step === 4 && k === 1))}
+          {label(br.add + 0.2, -0.62, "⊕  h + f(norm(h))", "var(--accent)", (step === 3 && k === 0) || (step === 4 && k === 1), 1.05)}
+        </group>
+      ))}
+      <Block x={endX} color={N} on={step === 5} w={1.2} />
+      {label(endX, BY + 0.45, "model.norm (18 katman sonra)", "var(--ax-hd)", step === 5)}
+      {label(-6.2, -0.5, "akış (hidden_states)", "var(--ax-T)", step === 0, 0.75)}
     </Stage3D>
   );
 }

@@ -39,7 +39,7 @@ test("5.3 3D: küpün üstüne gelince değer görünüyor", async ({ page }) =>
   expect(found).toBe(true);
 });
 
-for (const p of ["/goruntu", "/encoder", "/oyun-alani", "/hepsi", "/gemma", "/gemma/akis", "/gemma/sqrt-d", "/gemma/geglu", "/gemma/katman", "/gemma/tying", "/gemma/dogrulama"]) {
+for (const p of ["/goruntu", "/encoder", "/uctan-uca", "/kopru", "/gemma", "/gemma/akis", "/gemma/sqrt-d", "/gemma/geglu", "/gemma/katman", "/gemma/tying"]) {
   test(`${p} scrolly: son adıma kadar ilerliyor`, async ({ page }) => {
     const errs: string[] = [];
     page.on("pageerror", (e) => errs.push(e.message));
@@ -54,9 +54,9 @@ for (const p of ["/goruntu", "/encoder", "/oyun-alani", "/hepsi", "/gemma", "/ge
   });
 }
 
-test("6: masked_scatter adımında görsel hücre hover'ı hedefini söylüyor", async ({ page }) => {
-  await page.goto("http://localhost:5173/#/hepsi", { waitUntil: "networkidle" });
-  const sc = page.locator(".scrolly").first();
+test("3: masked_scatter adımında görsel hücre hover'ı hedefini söylüyor", async ({ page }) => {
+  await page.goto("http://localhost:5173/#/kopru", { waitUntil: "networkidle" });
+  const sc = page.locator(".scrolly").filter({ hasText: "_merge_input_ids_with_image_features" }).first();
   await sc.locator(".scrolly-step").nth(5).evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.4));
   await page.waitForTimeout(2500);
   const cell = sc.locator(".scrolly-fig div[style*='position: absolute']").filter({ hasText: /^-?\d/ });
@@ -80,7 +80,7 @@ test("2: yama gezgini hover ile yama ve token değişiyor", async ({ page }) => 
   await expect(fig.getByText("yama (1, 1) → token 17")).toBeVisible();
 });
 
-test("4: kutu çizince <loc> token'ları güncelleniyor", async ({ page }) => {
+test("3: kutu çizince <loc> token'ları güncelleniyor", async ({ page }) => {
   await page.goto("http://localhost:5173/#/kopru", { waitUntil: "networkidle" });
   const fig = page.locator(".fig").filter({ hasText: "Bir kutu çiz" });
   await fig.scrollIntoViewIfNeeded();
@@ -90,6 +90,55 @@ test("4: kutu çizince <loc> token'ları güncelleniyor", async ({ page }) => {
   await page.mouse.move(b.x + 1, b.y + 1);
   await page.mouse.down();
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 5 });
+  // sürüklerken kutunun köşelerinde token'lar görünüyor
+  await expect(fig.getByTestId("loc-tl")).toHaveText(/<loc000\d><loc000\d>/);
+  await expect(fig.getByTestId("loc-br")).toHaveText(/<loc05\d\d><loc05\d\d>/);
   await page.mouse.up();
-  await expect(fig.getByText(/<loc000\d><loc000\d><loc05\d\d><loc05\d\d>/)).toBeVisible();
+  await expect(fig.locator(".mono").filter({ hasText: "tabela" }).first()).toHaveText(/<loc000\d><loc000\d><loc05\d\d><loc05\d\d> tabela/);
+});
+
+test("açılış: mimari animasyonu oynuyor, adıma tıklanıyor, kutu bölüme götürüyor", async ({ page }) => {
+  await page.goto("http://localhost:5173/#/", { waitUntil: "networkidle" });
+  const arch = page.locator(".arch-full");
+  await expect(arch.locator(".arch-step-n")).toHaveText("1");
+  await page.waitForTimeout(3000);
+  await expect(arch.locator(".arch-step-n")).not.toHaveText("1");
+  await arch.getByRole("tab", { name: "Gemma" }).click();
+  await expect(arch.locator(".arch-step-n")).toHaveText("5");
+  await arch.locator("[aria-label=siglip]").click();
+  await expect(page).toHaveURL(/#\/buyuk-resim$/);
+  await expect(page.locator(".arch-mini")).toBeVisible();
+});
+
+test("2.2: filtre seçimi hover'da değil tıklamada değişiyor", async ({ page }) => {
+  await page.goto("http://localhost:5173/#/goruntu", { waitUntil: "networkidle" });
+  const gal = page.getByRole("listbox", { name: "filtre galerisi" });
+  await gal.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(800);
+  const opts = gal.getByRole("option");
+  await opts.nth(5).click();
+  await opts.nth(20).hover();
+  await expect(opts.nth(5)).toHaveAttribute("aria-selected", "true");
+  await expect(opts.nth(20)).toHaveAttribute("aria-selected", "false");
+  await opts.nth(20).click();
+  await expect(opts.nth(20)).toHaveAttribute("aria-selected", "true");
+});
+
+test("4.4: laboratuvarda x × 10 çıktıyı değiştirmiyor", async ({ page }) => {
+  await page.goto("http://localhost:5173/#/gemma/rmsnorm", { waitUntil: "networkidle" });
+  const btn = page.getByRole("button", { name: "x × 10" });
+  await btn.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(800);
+  const root = btn.locator("xpath=../../..");
+  // çıktı bloğu "=" işaretinin sağında: en sağdaki 32 sayı
+  const outs = () => root.evaluate((el) => {
+    const cells = [...el.querySelectorAll("div")].filter((d) => d.style.position === "absolute" && /^-?\d/.test(d.textContent ?? "") && d.children.length === 0);
+    const xs = [...new Set(cells.map((d) => parseFloat(d.style.left)))].sort((a, b) => a - b);
+    const right = xs.slice(-8);
+    return cells.filter((d) => right.includes(parseFloat(d.style.left))).map((d) => d.textContent).join(",");
+  });
+  const before = await outs();
+  await btn.click();
+  await page.waitForTimeout(900);
+  expect(await outs()).toBe(before);
 });

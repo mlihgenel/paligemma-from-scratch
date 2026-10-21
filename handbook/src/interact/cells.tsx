@@ -79,6 +79,7 @@ export function CellCanvas({ cells, width, height, max = 1, onDrag, labels, high
               color: bg === "transparent" || bg.startsWith("color-mix") || bg.includes("--bg") ? "var(--fg)" : bg.startsWith("var") ? "#ffffff" : inkFor(bg),
               outline: hover?.c.id === c.id ? "2px solid var(--fg)" : c.ring ? "2px solid var(--accent)" : "none",
               outlineOffset: 1, cursor: c.editable ? "ns-resize" : c.tip ? "crosshair" : "default", userSelect: "none",
+              boxShadow: c.editable ? "inset 0 0 0 1.5px color-mix(in srgb, var(--fg) 30%, transparent)" : undefined,
             }}>
             {c.text}
           </motion.div>

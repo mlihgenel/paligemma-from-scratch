@@ -1,4 +1,4 @@
-// Bölüm 2: ön işleme, Conv2d yama gezgini, flatten/transpose 3D, konum embedding'i, karıştırma deneyi
+// Bölüm 2.2: ön işleme, Conv2d yama gezgini, flatten/transpose 3D, konum embedding'i, karıştırma deneyi
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import * as d3 from "d3";
@@ -105,6 +105,7 @@ export function PatchExplorer() {
   const { imageIdx } = useStore();
   const [pr, setPr] = useState<[number, number]>([7, 7]);
   const [fi, setFi] = useState(0);
+  const [hf, setHf] = useState<number | null>(null);   // üstüne gelinen filtre: sadece önizleme halkası
   const zoom = useRef<HTMLCanvasElement>(null);
   const fz = useRef<HTMLCanvasElement>(null);
   const gal = useRef<(HTMLCanvasElement | null)[]>([]);
@@ -123,7 +124,14 @@ export function PatchExplorer() {
     return out;
   }, [px, F, fi]);
   useEffect(() => { if (px) drawPatch(zoom.current, px, pr[0], pr[1]); }, [px, pr]);
-  useEffect(() => { if (F) { drawFilter(fz.current, F, fi); gal.current.forEach((cv, i) => drawFilter(cv, F, i)); } }, [F, fi]);
+  useEffect(() => { if (F) drawFilter(fz.current, F, fi); }, [F, fi]);
+  useEffect(() => { if (F) gal.current.forEach((cv, i) => drawFilter(cv, F, i)); }, [F]);
+  const onGalKey = (e: React.KeyboardEvent) => {
+    const d = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -16, ArrowDown: 16 }[e.key];
+    if (d === undefined) return;
+    e.preventDefault();
+    setFi((f) => Math.min(63, Math.max(0, f + d)));
+  };
   if (!px || !F || !fmap) return <Loading what="pikseller ve filtreler" error={pipe.error ?? sl.error} />;
   const im = pipe.data.images[imageIdx];
   const v = fmap[pr[0] * N + pr[1]];
@@ -148,14 +156,21 @@ export function PatchExplorer() {
             <span style={{ fontSize: 22, color: "var(--fg-faint)" }}>=</span>
             <div style={{ fontFamily: "var(--display)", fontSize: 30, fontWeight: 650, color: "var(--accent)", fontVariantNumeric: "tabular-nums" }}>{v.toFixed(2)}</div>
           </div>
-          <p className="small muted" style={{ margin: "10px 0 0" }}>588 piksel × 588 ağırlık, toplam (+ bias). Gerçek modelde 1152 filtre var: her yama 1152 sayıya, yani bir token'a dönüşüyor. Aşağıdaki galeriden filtre seç.</p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(16, 1fr)", gap: 2, marginTop: 10 }}>
+          <p className="small muted" style={{ margin: "10px 0 0" }}>588 piksel × 588 ağırlık, toplam (+ bias). Gerçek modelde 1152 filtre var: her yama 1152 sayıya, yani bir token'a dönüşüyor.</p>
+          <div className="small" style={{ margin: "12px 0 6px", display: "flex", justifyContent: "space-between", gap: 8 }}>
+            <span><b>Galeriden bir filtreye tıkla</b></span>
+            <span className="muted mono">{hf !== null && hf !== fi ? `#${sl.data.patch_filters_idx[hf]} · tıkla` : `seçili #${sl.data.patch_filters_idx[fi]}`}</span>
+          </div>
+          <div role="listbox" aria-label="filtre galerisi" tabIndex={0} onKeyDown={onGalKey} onPointerLeave={() => setHf(null)}
+            style={{ display: "grid", gridTemplateColumns: "repeat(16, 1fr)", gap: 3, outline: "none" }}>
             {Array.from({ length: 64 }, (_, i) => (
-              <canvas key={i} ref={(el) => (gal.current[i] = el)} onClick={() => setFi(i)} onPointerEnter={() => setFi(i)}
-                style={{ width: "100%", aspectRatio: "1", imageRendering: "pixelated", cursor: "pointer", outline: i === fi ? "2px solid var(--accent)" : "none", borderRadius: 2 }} />
+              <canvas key={i} ref={(el) => (gal.current[i] = el)} role="option" aria-selected={i === fi} onClick={() => setFi(i)} onPointerEnter={() => setHf(i)}
+                style={{ width: "100%", aspectRatio: "1", imageRendering: "pixelated", cursor: "pointer", borderRadius: 2, transition: "transform .12s, opacity .12s",
+                  outline: i === fi ? "2.5px solid var(--accent)" : i === hf ? "1.5px dashed var(--fg-muted)" : "none", outlineOffset: 1,
+                  transform: i === hf && i !== fi ? "scale(1.12)" : "none", opacity: i === fi || i === hf ? 1 : 0.82 }} />
             ))}
           </div>
-          <div className="small muted" style={{ marginTop: 4 }}>gerçek PaliGemma filtreleri (en büyük normlu 64'ü), RGB'ye ölçeklenmiş</div>
+          <div className="small muted" style={{ marginTop: 6 }}>gerçek PaliGemma filtreleri (en büyük normlu 64'ü), RGB'ye ölçeklenmiş · ok tuşlarıyla da gezebilirsin</div>
         </div>
         <div>
           <div className="small" style={{ marginBottom: 6 }}><b>Bu filtrenin bütün yamalardaki cevabı</b> <span className="muted">· [16, 16]</span></div>

@@ -3,7 +3,7 @@ import { CodeWalk } from "../../components/CodeWalk";
 import { BreakIt, ManimVideo } from "../../components/misc";
 import { Scrolly, Step } from "../../interact/Scrolly";
 import { RealNormWeights, OrderStats, ZeroInitStats } from "./w/Rms";
-import { RmsSequence, RmsPlayground, NormPlane, Keepdim3DScene } from "./w/Rms2";
+import { RmsSequence, RmsPlayground, NormGeometry, Keepdim3DScene } from "./w/Rms2";
 import { Link } from "react-router-dom";
 
 # RMSNorm
@@ -67,16 +67,16 @@ Aşağıdaki sayılar uydurma değil. PaliGemma'nın embedding tablosundan `<bos
   { match: "return output.type_as(x)", title: "Girdinin dtype'ına dön", text: <>Tek bir yuvarlama, en sonda. Çıktı <S s="B, T, D" />.</> },
 ]} />
 
-## Geometri: çember
+## Geometri: küre
 
-d = 2 olsaydı RMSNorm'un yaptığını düzlemde görebilirdik. Her nokta yönünü koruyor, büyüklüğünü kaybediyor: hepsi √d yarıçaplı bir çembere taşınıyor.
+d = 3 olsaydı RMSNorm'un yaptığını gözümüzle görebilirdik. Her nokta yönünü koruyor, büyüklüğünü kaybediyor: hepsi √d yarıçaplı bir küreye taşınıyor.
 
-<Fig wide caption={<><b>RMSNorm, (1+w) ve LayerNorm, iki boyutta.</b> x noktasını sürükle. Gri noktalar rastgele vektörler, renkli noktalar onların görüntüsü. Gerçekte d = 2048: "çember" 2048 boyutlu bir küre, yarıçapı √2048 ≈ 45.25.</>}>
-<NormPlane />
+<Fig wide caption={<><b>RMSNorm, (1+w) ve LayerNorm, üç boyutta.</b> Gri noktalar rastgele vektörler, renkli noktalar onların görüntüsü. Sekmeler arasında geçince noktaların nereye kaydığını izle. Gerçekte d = 2048: küre 2048 boyutlu, yarıçapı √2048 ≈ 45.25.</>}>
+<NormGeometry />
 </Fig>
 
 <Callout kind="neden" title="Ortalamayı çıkarmamak neden sorun değil?">
-LayerNorm iki şey yapar: merkezleme (ortalamayı sıfırlama) ve ölçekleme. Zhang ve Sennrich eğitimi kararlı tutanın büyük ölçüde ölçekleme olduğunu gösterdi. Merkezleme olmadan kalite neredeyse aynı, hesap daha ucuz: bir ortalama ve bir çıkarma daha az, bias yok. Ayrıca LayerNorm "bütün boyutların ortak kayması" bilgisini siliyor, RMSNorm koruyor. Düzlemde LayerNorm'a geçince bunu görebilirsin: geriye sadece iki nokta kalıyor.
+LayerNorm iki şey yapar: merkezleme (ortalamayı sıfırlama) ve ölçekleme. Zhang ve Sennrich eğitimi kararlı tutanın büyük ölçüde ölçekleme olduğunu gösterdi. Merkezleme olmadan kalite neredeyse aynı, hesap daha ucuz: bir ortalama ve bir çıkarma daha az, bias yok. Ayrıca LayerNorm "bütün boyutların ortak kayması" bilgisini siliyor, RMSNorm koruyor. Yukarıda LayerNorm'a geçince bunu görebilirsin: noktalar (1, 1, 1) yönünü kaybedip bir çembere sıkışıyor.
 </Callout>
 
 ## Üç eksenle: keepdim ve broadcast
