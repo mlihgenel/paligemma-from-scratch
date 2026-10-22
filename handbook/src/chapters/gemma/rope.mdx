@@ -1,0 +1,110 @@
+import { Callout, Fig, Predict, S, Impact, ConceptQ } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { RopeDial, RopeFreqs, RopeScoreCurve, PairLayout, Bf16Angle } from "./w/Rope";
+import { Link } from "react-router-dom";
+
+# RoPE: konum, dönerek
+
+<p className="lead">Attention token'lara <b>sıra</b> vermez: dizinin karıştırılmış hali aynı skorları üretir. Konumu bilmesi için bir yerden bilgi girmesi lazım. Gemma bunu embedding'e bir şey ekleyerek yapmıyor. Q ve K vektörlerini konumlarına göre <b>döndürüyor</b>.</p>
+
+## Fikir: konum bir açı olsun
+
+SigLIP'te konum, tabloda öğrenilen bir vektör olarak yamaların embedding'ine <i>ekleniyordu</i> (<Link to="/goruntu">2.2</Link>). RoPE (rotary position embedding) farklı çalışıyor: Q ve K'nın <code>head_dim</code> boyutlu vektörünü ikişerli çiftlere ayırıyor ve her çifti, kendi 2 boyutlu düzleminde **konum × θ** kadar döndürüyor.
+
+$$
+\begin{pmatrix} a' \\ b' \end{pmatrix}
+=
+\begin{pmatrix} \cos m\theta & -\sin m\theta \\ \sin m\theta & \cos m\theta \end{pmatrix}
+\begin{pmatrix} a \\ b \end{pmatrix}
+$$
+
+Aşağıda tek bir çift var: <i>q</i> m. konumda, <i>k</i> n. konumda. Kaydırıcıları oynat. Sonra "ikisini +1 kaydır"a bas ve iç çarpıma bak.
+
+<Fig wide caption={<><b>Bir çiftin dönüşü.</b> Her çiftin kendi hızı θ var: çift 0 konum başına 1 radyan, çift 100 yaklaşık 0,0007 radyan dönüyor. Oklar döner, aralarındaki açı ve dolayısıyla <span className="mono">q · k</span> yalnızca <span className="mono">m − n</span>'ye bağlı.</>}>
+<RopeDial />
+</Fig>
+
+Bunun nedeni iki dönüşün birbirini kısmen götürmesi:
+
+$$
+(R_{m\theta}\, q)\cdot(R_{n\theta}\, k) \;=\; q^\top R_{m\theta}^\top R_{n\theta}\, k \;=\; q^\top R_{(n-m)\theta}\, k
+$$
+
+Skor, konumların kendisine değil **farkına** bağlı. "Üç token geride" ifadesi dizinin neresinde olursa olsun aynı anlama geliyor.
+
+## 128 çift, 128 farklı hız
+
+`head_dim = 256`, yani 128 çift. Çift <span className="mono">i</span>'nin hızı <span className="mono">θᵢ = 10000^(−2i/256)</span>: ilk çiftler hızlı, son çiftler çok yavaş döner. Aşağıdaki frekanslar senin `GemmaRotaryEmbedding` sınıfından geliyor.
+
+<Fig caption={<><b>Hızlı çiftler yakını, yavaş çiftler uzağı ayırıyor.</b> Çift 0 yaklaşık 6 token'da bir tur atıyor. Çift 127 ise 50 binden fazla token'da. Saat ibresi gibi: saniye ibresi yakın zamanı, saat ibresi uzak zamanı gösteriyor.</>}>
+<RopeFreqs />
+</Fig>
+
+<Fig caption={<><b>Skorun konum farkına bağlılığı.</b> q ve k eşit uzunlukta, aynı yönde (en iyi durum). Hızlı çiftler hemen söner, yavaş çiftler uzak mesafede de bilgi taşır. Altta senin kodunla ölçülen: farkı 5 olan dört farklı konum çifti <b>aynı skoru</b> veriyor.</>}>
+<RopeScoreCurve />
+</Fig>
+
+## Kodda nerede?
+
+Üç parça var ve hepsi `gemma.py`'nin başında. Birincisi sadece cos/sin **tablosunu** üretiyor, Q ve K'ya dokunmuyor.
+
+<CodeWalk file="gemma.py" symbol="GemmaRotaryEmbedding" notes={[
+  { match: "self.base = base", title: "base = 10000", text: <>Config'teki <code>rope_theta</code>. Frekansların ne kadar yavaşlayacağını belirliyor. Gemma 1 ve 2 aynı değeri kullanıyor.</> },
+  { match: "inv_freq = 1.0 / (self.base", title: "frekanslar", text: <><S s="head_dim/2" ax="hd" /> = 128 sayı, <span className="mono">θᵢ = base^(−2i/head_dim)</span>. <code>arange(0, dim, 2)</code> çift numarasının iki katını veriyor.</> },
+  { match: "self.register_buffer", title: "buffer, parametre değil", text: <>Öğrenilen bir şey değil, sabit. <code>persistent=False</code> ile <code>state_dict</code>'e de girmiyor: checkpoint'te bu anahtar yok, yüklerken "missing key" çıkmasın.</> },
+  { match: "def forward(self, x", title: "x sadece dtype ve device için", text: <>Tablo <code>x</code>'in değerlerini kullanmıyor. Sadece çıktıyı onun dtype'ına ve cihazına çevirmek için alınıyor.</> },
+  { match: "freqs = position_ids[..., None].float()", title: "açı = konum × θ, float32", text: <><S s="B, T, 1" /> × <S s="head_dim/2" ax="hd" /> → <S s="B, T, head_dim/2" ax="B,T,hd" />. <b>float32'de</b>: konum 8000 gibi büyük sayılara çıkınca bf16 açıyı kaydırır. Aşağıdaki deney bunu gösteriyor.</> },
+  { match: "emb = torch.cat((freqs, freqs), dim=-1)", title: "aynı açı iki kez", text: <>Çiftler <code>(i, i + head_dim/2)</code> olarak eşleneceği için ikinci yarıya da aynı açılar lazım. Şekil <S s="B, T, head_dim" ax="B,T,hd" /> oluyor.</> },
+  { match: "return emb.cos().to(x.dtype)", title: "cos ve sin", text: <>İki tablo. Her katman aynısını kullanıyor, bu yüzden <code>GemmaModel</code> bir kez hesaplayıp katmanlara veriyor (<Link to="/gemma/attention">4.11</Link>).</> },
+]} />
+
+İkinci ve üçüncü parça tabloyu Q ve K'ya uyguluyor:
+
+<CodeWalk file="gemma.py" symbol="rotate_half" notes={[
+  { match: "x1 = x[..., : x.shape[-1] // 2]", title: "ilk yarı", text: <>Vektörün ilk yarısı: boyut 0 … 127.</> },
+  { match: "x2 = x[..., x.shape[-1] // 2 :]", title: "ikinci yarı", text: <>İkinci yarısı: boyut 128 … 255.</> },
+  { match: "return torch.cat((-x2, x1), dim=-1)", title: "[−x₂, x₁]", text: <>2B döndürmede <span className="mono">(a, b)</span> çiftinin 90° dönmüşü <span className="mono">(−b, a)</span>. Burada <span className="mono">a = x₁</span>, <span className="mono">b = x₂</span> ve 128 çiftin hepsi aynı anda.</> },
+]} />
+
+<CodeWalk file="gemma.py" symbol="apply_rotary_pos_emb" notes={[
+  { match: "cos = cos.unsqueeze(1)", title: "head ekseni", text: <><S s="B, T, hd" ax="B,T,hd" /> → <S s="B, 1, T, hd" ax="B,H,T,hd" />. Her head aynı konumda aynı açıyla dönüyor, bu yüzden tablo head'ler arasında paylaşılıyor.</> },
+  { match: "q_embed = (q * cos) + (rotate_half(q) * sin)", title: "döndürme formülü", text: <><span className="mono">x cos θ + rotate_half(x) sin θ</span>: <span className="mono">(a, b) → (a cos − b sin, b cos + a sin)</span> bütün çiftlerde birden. Sol taraf Q ve K'nın aynı formülle döndüğünü gösteriyor.</> },
+]} />
+
+## Hangi boyutlar çift oluyor?
+
+Makalede çiftler komşu boyutlar: <span className="mono">(0, 1), (2, 3), …</span>. HF'de ve senin kodunda ise çiftler <b>ilk yarı ile ikinci yarı</b>: <span className="mono">(0, 128), (1, 129), …</span>. İkisi aynı dönüşü anlatıyor, sadece boyutların hangi sırayla dizildiğini değiştiriyor. Ama Gemma'nın ağırlıkları <b>yarı/yarı düzenine</b> göre eğitildi. Yanlış düzeni seçersen hata vermez, sonuç sessizce bozulur.
+
+<Fig wide caption={<><b>Aynı döndürme, iki düzen.</b> Boyutları (komşu çift → yarı/yarı) yeniden sıralarsan iki yöntem birebir aynı sonucu veriyor. Ama sıralamadan, ham vektöre iki yöntemi uygularsan farklı çiftler döndüğü için sonuçlar farklı çıkıyor. Ölçümler senin <code>apply_rotary_pos_emb</code> fonksiyonunla.</>}>
+<PairLayout />
+</Fig>
+
+## bf16'da konum
+
+Model bf16'da çalışıyor ama açı hesabı float32'de. Sebebi: bf16'nın 7 mantis biti var, yani büyük tam sayıları tam gösteremiyor.
+
+<Fig caption={<><b>Konum bf16'ya çevrilince ne oluyor?</b> 256'ya kadar her konum tam. Sonra adım her ikiye katlanmada iki katına çıkıyor: 256'dan sonra 2'şer, 4096'dan sonra 32'şer atlıyor. Çift 0'ın hızı 1 radyan/konum olduğu için konumdaki her birim hata, açıda bir radyan hata demek.</>}>
+<Bf16Angle />
+</Fig>
+
+<Callout kind="dikkat" title="float32'yi koru">
+<code>position_ids[..., None].float()</code> satırı bu yüzden orada. Sadece açı float32'de. cos ve sin hesaplandıktan sonra Q/K'nın dtype'ına dönüyor (son satırdaki <code>.to(x.dtype)</code>).
+</Callout>
+
+## Kavram soruları
+
+<ConceptQ n={1} q="RoPE neden embedding'e eklenmiyor da Q ve K'ya uygulanıyor? V'ye neden uygulanmıyor?">
+Konum bilgisinin <b>skorda</b> görünmesi gerekiyor, skor da <span className="mono">q · k</span>. Embedding'e eklenen konum, katmanlarda başka bilgiyle karışıp kayboluyor ve her katmanda yeniden hatırlatılması gerekiyor. Q ve K döndürülünce her katmanın her attention'ında konum doğrudan skora giriyor. <b>V</b> ise "ne taşıdığını" anlatıyor: ağırlıklı toplamda içerik olarak karışıyor. Onu döndürürsen çıktı, baktığı token'ın konumuna göre bozulur.
+</ConceptQ>
+
+<ConceptQ n={2} q="Neden iki token arasındaki skor yalnızca konum farkına bağlı?">
+Çünkü <span className="mono">R(mθ)ᵀ R(nθ) = R((n − m)θ)</span>: iki dönüşün çarpımı farkın dönüşü. Yukarıdaki kaydırıcılarda ikisini birlikte kaydırdığında iç çarpımın değişmemesi bu.
+</ConceptQ>
+
+<Predict q="KV cache'te bir token'ın K'sı saklanıyor. K'yı RoPE'dan önce mi, sonra mı saklamak gerekir?" hint="260. token üretilirken önceki token'ların K'sı yeniden hesaplanıyor mu?">
+<b>Sonra</b>. Döndürülmüş K saklanıyor, çünkü her token kendi konumunda bir kez döndürülüyor ve bir daha değişmiyor. Yeni token üretilirken sadece onun Q ve K'sı <b>kendi konumuyla</b> (<code>position_ids</code> = 260) döndürülüyor, eskilerin K'sına dokunulmuyor. <code>position_ids</code>'in <code>GemmaModel</code>'e ayrı bir argüman olmasının nedeni bu: tablo her zaman 0'dan başlamıyor.
+</Predict>
+
+<Impact from="gemma.py: GemmaRotaryEmbedding(head_dim, base)" to="GemmaAttention.forward: apply_rotary_pos_emb(q, k, cos, sin)">
+Gemma 2'de aynı RoPE kullanılıyor. Fark başka yerde: ölçek <code>head_dim</code> yerine config'teki <code>query_pre_attn_scalar</code>'dan alınıyor, skor yumuşatılıyor ve yarı katmanlarda pencere sınırı var. Sonraki sayfada <Link to="/gemma/attention">attention'ın tamamı</Link> var.
+</Impact>

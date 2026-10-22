@@ -33,3 +33,19 @@ export interface PgSlices {
   embed_named: { text: string; id: number; piece: string }[]; embed_named_rows: Arr; embed_sample_rows: Arr;
   pos_cos: Arr; patch_filters: Arr; proj_stats: any; proj_hist: any;
 }
+
+/** export_attention.py çıktısı: RoPE, repeat_kv ve GemmaAttention deneyleri (senin gemma.py'nle) */
+export interface AttentionToy {
+  toy_config: any; seq_len: number;
+  rope_real: { head_dim: number; base: number; inv_freq: number[] };
+  rope_layout: { half_vs_adjacent_maxdiff: number; half_vs_adjacent_permuted_maxdiff: number };
+  rope_relative: { scores_diff5: number[]; spread: number; score_diff5: number; score_diff6: number; score_diff_neg5: number };
+  repeat_kv: Record<string, { expand_shares_memory: boolean; expand_stride_rep: number; repeat_shares_memory: boolean; repeat_shape: number[]; all_equal: boolean }>;
+  attention: {
+    weights_causal: Arr; weights_nomask: Arr; scores_causal: Arr;
+    manual_vs_forward_maxdiff: number; row_sums_maxdiff: number; upper_triangle_max: number;
+    leak_with_mask: number; leak_without_mask: number;
+  };
+  scale_stats: Record<string, { std_raw: number; std_scaled: number }>;
+  params_real: { q: number; k: number; v: number; o: number };
+}

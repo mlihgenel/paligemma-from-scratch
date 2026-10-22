@@ -78,7 +78,9 @@ Gemma'nın gördüğü dizinin her konumu iki kaynaktan birinden geliyor: metin 
   { match: "image_features = self.vision_tower(pixel_values.to(inputs_embeds.dtype))", title: "2. görüntü", text: <>pixel_values float32 gelir. Model bf16'daysa önce çevriliyor, yoksa Conv2d dtype uyuşmazlığı hatası verir. <S s="B, 3, 224, 224" ax="B,C,,," /> → <S s="B, 256, 1152" ax="B,T,D" />.</> },
   { match: "image_features = self.multi_modal_projector(image_features)", title: "3. projektör", text: <><S s="B, 256, 1152" ax="B,T,D" /> → <S s="B, 256, 2048" ax="B,T,D" />.</> },
   { match: "inputs_embeds = self._merge_input_ids_with_image_features(", title: "4. birleştir", text: <>Yukarıdaki animasyon. <S s="B, T, 2048" ax="B,T,D" />.</> },
-  { match: "logits = self.language_model(inputs_embeds)", title: "5. Gemma", text: <><S s="B, T, 2048" ax="B,T,D" /> → <S s="B, T, 257216" ax="B,T,V" />, float32. Bölüm 4'ün konusu.</> },
+  { match: "position_ids = torch.arange(1, T + 1", title: "5. konumlar", text: <>RoPE için <code>1, 2, …, T</code>. HF PaliGemma konumları 1'den başlatıyor. Sonuç 0'dan başlasa da aynı olurdu, çünkü RoPE'ta skor yalnızca konum farkına bağlı (<Link to="/gemma/rope">4.9</Link>), ama HF ile birebir kalmak için aynısı yapılıyor.</> },
+  { match: "mask = make_prefix_lm_mask(T, prefix_len", title: "6. prefix-LM maskesi", text: <><S s="1, 1, T, T" />. Prefix (ilk <code>prefix_len</code> token) iki yönlü, geri kalan nedensel. <code>prefix_len</code> verilmezse bütün girdi prefix sayılıyor. Aşağıdaki 5. bölümün konusu.</> },
+  { match: "logits = self.language_model(inputs_embeds", title: "7. Gemma", text: <><S s="B, T, 2048" ax="B,T,D" /> → <S s="B, T, 257216" ax="B,T,V" />, float32. Maske ve konumlar burada katmanlara iniyor. Bölüm 4'ün konusu.</> },
 ]} />
 
 <Fig caption={<><b>Gerçek boyutlu forward.</b> Şekiller senin modelinin meta cihazındaki gerçek çalışmasından ("caption tr", T = 260).</>}>
@@ -107,7 +109,11 @@ Dizi artık tek parça, ama görüntüyle metni gerçekten **konuşturan** şey 
 PaliGemma makalesi (§5.2): görsel token'ların prompt'u, yani "ne sorulduğunu" görebilmesi, görüntü temsilini göreve göre şekillendiriyor. Tam causal maskede ilk görsel token hiçbir şey göremez, son görsel token ise prompt'u göremez. Prefix'in kendisi zaten verili, gelecekten bilgi sızdırma riski yok. Causal kısıt sadece modelin <i>üreteceği</i> kısım için gerekli.
 </Callout>
 
-<Note label="Kodda">Senin modelinde attention henüz <code>Identity</code>: metin token'ları görüntüyü şimdilik görmüyor. Attention, RoPE ve bu maske sıradaki parçalar.</Note>
+<Note label="Kodda">Maskeyi <code>make_prefix_lm_mask(total_len, prefix_len, …)</code> kuruyor, kural tek satır: <b><code>i</code>, <code>j</code>'ye bakabilir ⇔ <code>j &lt; prefix_len</code> veya <code>j ≤ i</code></b>. Önce nedensel maske, sonra <code>mask[:, :prefix_len] = 0</code> ile prefix sütunları açılıyor. <code>PaliGemma.forward</code> bunu kurup <code>GemmaModel</code>'e iletiyor. <code>GemmaModel</code> maske verilmezse nedensel kuruyor (<Link to="/gemma/attention">4.11</Link>). Üretimde (<code>generate.py</code>) girdiye cevap token'ları eklenirken <code>prefix_len</code> ilk komutun uzunluğunda sabit kalıyor.</Note>
+
+<Callout kind="dikkat" title="HF'de prefix her zaman iki yönlü değil">
+HF, prefix'i yalnızca <code>token_type_ids</code> verilirse iki yönlü yapıyor. Processor bunu cevap (suffix) verildiğinde üretiyor. Sadece görüntü + komutla çalıştırınca <code>token_type_ids</code> yok ve HF'nin maskesi <b>tamamen nedensel</b> oluyor. Makale ve orijinal kod çıkarımda da prefix'i iki yönlü tutuyor. Senin modelin bunu yapıyor ve HF ile karşılaştırırken ona <code>token_type_ids = 0</code> verince logit'ler birebir aynı. Verilmeyince fark büyük (küçük rastgele modelde ~8–10).
+</Callout>
 
 ## Ek: kutular da metin, &lt;loc&gt; token'ları
 

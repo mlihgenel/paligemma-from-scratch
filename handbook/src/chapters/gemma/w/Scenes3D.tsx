@@ -129,7 +129,7 @@ export function HighwayScene({ step, progress = 0 }: { step: number; progress?: 
           <Block x={br.f} color={br.kind === "attn" ? F : D} on={live(k)} />
           <AddNode x={br.add} on={(step === 3 && k === 0) || (step === 4 && k === 1)} />
           {label(br.norm, BY + 0.45, k === 0 ? "input_layernorm" : "post_attention_layernorm", "var(--ax-hd)", (step === 1 && k === 0) || (step === 4 && k === 1))}
-          {label(br.f, BY + 0.45, k === 0 ? "self_attn (şimdilik Identity)" : "mlp", k === 0 ? "var(--fg-muted)" : "var(--ax-D)", (step === 2 && k === 0) || (step === 4 && k === 1))}
+          {label(br.f, BY + 0.45, k === 0 ? "self_attn" : "mlp", k === 0 ? "var(--fg-muted)" : "var(--ax-D)", (step === 2 && k === 0) || (step === 4 && k === 1))}
           {label(br.add + 0.2, -0.62, "⊕  h + f(norm(h))", "var(--accent)", (step === 3 && k === 0) || (step === 4 && k === 1), 1.05)}
         </group>
       ))}

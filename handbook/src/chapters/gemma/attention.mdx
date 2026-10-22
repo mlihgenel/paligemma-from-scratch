@@ -1,0 +1,106 @@
+import { Callout, Fig, Predict, S, Impact, ConceptQ } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { BreakIt } from "../../components/misc";
+import { AttnFlow, MaskGrid, MaskWeights, ScaleDemo } from "./w/Attn";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { Link } from "react-router-dom";
+
+# GemmaAttention
+
+<p className="lead">Token'ların birbirini gördüğü tek yer. Her token kendi sorgusunu bütün anahtarlarla karşılaştırıyor, çıkan skorlarla değerleri karıştırıyor. Önceki iki sayfadaki parçalar (<Link to="/gemma/rope">RoPE</Link> ve <Link to="/gemma/mqa">repeat_kv</Link>) burada birleşiyor.</p>
+
+## Tek bakışta
+
+Bir katmanda attention şu yolu izliyor: projeksiyon, head'lere bölme, RoPE, K/V'yi genişletme, skor, maske, softmax, değerlerle karıştırma, head'leri birleştirme, çıkış projeksiyonu. Kodda önce bu yolun parametreleri (`__init__`), sonra yolun kendisi (`forward`) var.
+
+<CodeWalk file="gemma.py" symbol="GemmaAttention" notes={[
+  { match: "self.head_dim = config.head_dim", title: "head_dim config'ten", text: <>256. <code>hidden_size / n_heads</code> ile hesaplanmıyor: Gemma 1 2B'de ikisi tesadüfen eşit (8 × 256 = 2048), Gemma 2'de değil.</> },
+  { match: "self.num_kv_groups = self.num_heads // self.num_kv_heads", title: "n_rep", text: <>Bir KV head'inin kaç Q head'ine hizmet ettiği: 8 // 1 = 8. <code>repeat_kv</code>'ye bu sayı veriliyor (<Link to="/gemma/mqa">4.10</Link>).</> },
+  { match: "self.scaling = self.head_dim ** -0.5", title: "1/√head_dim", text: <>1/16. Skor iç çarpımının yayılımı <code>√head_dim</code> kadar büyüdüğü için softmax'tan önce bununla çarpılıyor. Aşağıdaki deney.</> },
+  { match: "self.q_proj = nn.Linear", title: "q_proj", text: <>2048 → 8 × 256 = 2048. Parametre: 4.194.304.</> },
+  { match: "self.k_proj = nn.Linear", title: "k_proj", text: <>2048 → 1 × 256. Parametre: 524.288 (q_proj'un sekizde biri).</> },
+  { match: "self.v_proj = nn.Linear", title: "v_proj", text: <>k_proj ile aynı boyut.</> },
+  { match: "self.o_proj = nn.Linear", title: "o_proj", text: <>Girişi <code>n_heads × head_dim</code>, <code>hidden_size</code> değil. Gemma 2'de ikisi farklı olduğu için böyle yazılmış. Bir katmanın attention'ı toplam 9.437.184 parametre, 18 katmanda yaklaşık 170 M.</> },
+  { match: "attention_mask: torch.Tensor | None = None", title: "maske dışarıdan", text: <>Attention maskeyi kendisi kurmuyor, alıyor. Hangi token'ın neyi göreceği modelin kararı (nedensel mi, PaliGemma'nın prefix-LM'i mi).</> },
+  { match: "q = self.q_proj(hidden_states)", title: "Q: 8 head", text: <><S s="B, T, D" /> → <S s="B, T, 2048" ax="B,T,D" /> → <code>view</code> ile <S s="B, T, 8, 256" ax="B,T,H,hd" /> → <code>transpose</code> ile <S s="B, 8, T, 256" ax="B,H,T,hd" />.</> },
+  { match: "k = self.k_proj(hidden_states)", title: "K: 1 head", text: <>Aynı işlem, ama <S s="B, 1, T, 256" ax="B,H,T,hd" />.</> },
+  { match: "cos, sin = position_embeddings", title: "RoPE tablosu", text: <>Model bir kez hesaplayıp getiriyor (<Link to="/gemma/rope">4.9</Link>).</> },
+  { match: "q, k = apply_rotary_pos_emb(q, k, cos, sin)", title: "RoPE: sadece Q ve K", text: <>V döndürülmüyor.</> },
+  { match: "k = repeat_kv(k, self.num_kv_groups)", title: "K'yı genişlet", text: <><S s="B, 1, T, 256" ax="B,H,T,hd" /> → <S s="B, 8, T, 256" ax="B,H,T,hd" />.</> },
+  { match: "scores = torch.matmul(q, k.transpose(2, 3)) * self.scaling", title: "skor", text: <><S s="B, 8, T, 256" ax="B,H,T,hd" /> @ <S s="B, 8, 256, T" ax="B,H,hd,T" /> → <S s="B, 8, T, T" ax="B,H,T,T" />. <code>scores[b, h, i, j]</code>: h. head'de i. token'ın j. token'a ilgisi.</> },
+  { match: "scores = scores + attention_mask", title: "maske", text: <>Toplama, çarpma değil: yasak yerlere çok küçük bir sayı ekleniyor.</> },
+  { match: "weights = F.softmax(scores, dim=-1, dtype=torch.float32)", title: "softmax float32'de", text: <>Satır başına: her sorgu token'ının ağırlıkları 1'e topluyor. <code>dtype=torch.float32</code> ile hesaplanıp sonra <code>q.dtype</code>'a dönüyor. bf16'da üstel toplamı yuvarlama hatası biriktirir, HF de böyle yapıyor.</> },
+  { match: "out = torch.matmul(weights, v)", title: "değerleri karıştır", text: <><S s="B, 8, T, T" ax="B,H,T,T" /> @ <S s="B, 8, T, 256" ax="B,H,T,hd" /> → <S s="B, 8, T, 256" ax="B,H,T,hd" />.</> },
+  { match: "out = out.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)", title: "head'leri birleştir", text: <>Head ekseni T'nin yanına dönüyor, sonra 8 × 256 = 2048 tek eksene yapışıyor. <code>transpose</code> bellek düzenini bozduğu için <code>view</code> değil <code>reshape</code>.</> },
+  { match: "return self.o_proj(out)", title: "çıkış projeksiyonu", text: <>Head'lerin çıktıları burada birbirine karışıyor. Çıkış <S s="B, T, D" />, katmanın girişiyle aynı şekil.</> },
+]} />
+
+## Adım adım, gerçek boyutlarla
+
+Sağda kod, altında bu adıma kadar oluşmuş tensörlerin şekilleri. Şekiller gerçek Gemma 2B ve 260 token'lık bir PaliGemma girdisi için.
+
+<Scrolly label="GemmaAttention.forward" figure={(s) => <AttnFlow step={s} />}>
+<Step>**Girdiler.** Akışın norm'lu kopyası <S s="B, T, D" />, RoPE tablosu (cos, sin) ve maske. Çıkış girişle aynı şekilde olacak: attention akışa bir **güncelleme** yazıyor.</Step>
+<Step>**Projeksiyonlar.** Q, K ve V ayrı ayrı <code>Linear</code>'lerden geçiyor. Sonra son eksen head'lere bölünüyor ve head ekseni öne alınıyor: head'ler artık bağımsız bir batch gibi.</Step>
+<Step>**RoPE.** Sadece Q ve K döndürülüyor. Şekiller değişmiyor, değerler konuma göre dönüyor.</Step>
+<Step>**repeat_kv.** Tek KV head'i 8 Q head'ine genişliyor. Bu sadece matris çarpımının şekil şartı için.</Step>
+<Step>**Skor.** <code>q @ kᵀ</code>: her head'de her token çifti için bir sayı. 1/√256 = 1/16 ile ölçekleniyor.</Step>
+<Step>**Maske.** Her token'ın görmemesi gereken yerlere çok küçük bir sayı ekleniyor.</Step>
+<Step>**Softmax.** Satır başına. Yasak yerler 0 ağırlık alıyor, her satır 1'e topluyor. <code>float32</code> içinde.</Step>
+<Step>**Değerlerle karıştır.** Her token, baktığı token'ların V'lerinin ağırlıklı ortalamasını alıyor.</Step>
+<Step>**Head'leri birleştir ve çıkış projeksiyonu.** 8 head × 256 = 2048, sonra <code>o_proj</code>. Katmanın girişiyle aynı şekil.</Step>
+</Scrolly>
+
+## Neden 1/√head_dim?
+
+İki rastgele <code>head_dim</code> boyutlu vektörün iç çarpımının standart sapması <code>√head_dim</code>. <code>head_dim = 256</code> iken skorlar ±16 civarında yayılıyor. Softmax üstel olduğu için bu yayılımda bir token neredeyse bütün ağırlığı alıyor: attention bir "keskin seçim"e dönüşüyor ve gradyan bu durumda sönüyor. 1/√head_dim, yayılımı head_dim'den bağımsız olarak 1'de tutuyor.
+
+<Fig caption={<><b>Aynı vektörler, ölçekli ve ölçeksiz.</b> 8 anahtar, rastgele bir sorgu. Ölçeksiz modda head_dim büyüdükçe bir çubuk her şeyi alıyor. Altta senin <code>head_dim</code> değerlerinle 4000 örnekten ölçülmüş standart sapmalar.</>}>
+<ScaleDemo />
+</Fig>
+
+## Maske: kim kimi görebilir?
+
+Nedensel dil modelinde bir token yalnızca <b>kendisini ve öncekileri</b> görebilmeli: yoksa eğitim sırasında cevabı doğrudan görür. Bu, skor tablosunun köşegen üstündeki yarısını yasaklamak demek. Yasak yerler **toplanan maske** ile kapatılıyor: izinli yerler 0, yasak yerler en küçük sayı. Softmax'ta <span className="mono">exp(−çok büyük) = 0</span>.
+
+<CodeWalk file="gemma.py" symbol="make_causal_mask" notes={[
+  { match: "mask = torch.full((T, T), torch.finfo(dtype).min", title: "en küçük sayıyla doldur", text: <>-inf yerine <code>finfo.min</code>. Tamamen yasaklı bir satır -inf ile softmax'ta NaN verir, <code>finfo.min</code> ile eşit ağırlık verir. Nedensel maskede hiçbir satır tamamen yasak olmuyor ama PaliGemma'daki maskelerde ve padding'de olabilir.</> },
+  { match: "mask = torch.triu(mask, diagonal=1)", title: "köşegenin üstü", text: <><code>triu(diagonal=1)</code> köşegenin <b>üstünü</b> tutuyor, geri kalanı 0 yapıyor: <code>j &gt; i</code> yasak, <code>j ≤ i</code> serbest.</> },
+  { match: "return mask[None, None]", title: "yayılma", text: <><S s="1, 1, T, T" ax="B,H,T,T" />: batch ve head eksenlerine yayılıyor, her batch ve head aynı maskeyi görüyor.</> },
+]} />
+
+<Fig caption={<><b>make_causal_mask(8, …) çıktısı.</b> −min = yasak. Bir satırın üstüne gel: o token'ın görebildikleri yeşil, göremedikleri kırmızı.</>}>
+<MaskGrid />
+</Fig>
+
+Aşağıda senin `GemmaAttention`'ın rastgele (ama belirgin) ağırlıklarla çalışıyor: 8 token, 4 head. Maske açıkken köşegen üstü tamamen 0. Kapatınca ağırlıklar gelecekteki token'lara da yayılıyor.
+
+<Fig wide caption={<><b>Senin attention'ından çıkan ağırlıklar.</b> Satırlar 1'e topluyor. Alttaki iki ölçüm: son token'ı değiştirince <b>önceki</b> token'ların çıktıları maskeliyken hiç değişmiyor, maskesizken değişiyor. <code>check_gemma.py</code>'deki "gelecek geçmişi etkilemiyor" testi bu.</>}>
+<MaskWeights />
+</Fig>
+
+## Katmana ve modele bağlanması
+
+Attention tek başına bir şey yapmıyor: `GemmaDecoderLayer` onu çağırıyor, `GemmaModel` da katmana gereken üç şeyi veriyor.
+
+<CodeWalk file="gemma.py" symbol="GemmaModel.forward" notes={[
+  { match: "position_ids: torch.Tensor | None = None", title: "position_ids", text: <><S s="B, T" ax="B,T" />. Her token'ın <b>dizideki</b> konumu. Verilmezse 0 … T−1. KV cache ile üretirken yeni token 260. konumda olacağı için dışarıdan geliyor.</> },
+  { match: "position_ids = torch.arange(T", title: "varsayılan konumlar", text: <><code>arange(T)</code>, her örnek için aynı.</> },
+  { match: "attention_mask = make_causal_mask(", title: "varsayılan maske", text: <>Saf Gemma için nedensel. PaliGemma kendi maskesini verecek: görüntü ve komut kısmı çift yönlü (<Link to="/kopru">3</Link>).</> },
+  { match: "position_embeddings = self.rotary_emb(hidden_states, position_ids)", title: "cos/sin bir kez", text: <>Tablo bütün katmanlarda aynı. 18 kez hesaplamak yerine bir kez hesaplanıp her katmana geçiriliyor.</> },
+  { match: "hidden_states = decoder_layer(hidden_states, position_embeddings, attention_mask)", title: "döngü", text: <>Artık her katmana üç şey gidiyor. <code>nn.Sequential</code> bunu yapamazdı (<Link to="/gemma/model">4.7</Link>).</> },
+]} />
+
+## Bilinçli olarak eksik olanlar
+
+<Callout kind="not" title="Henüz olmayanlar">
+<b>KV cache</b> yok: her seferinde bütün dizi baştan işleniyor. <code>layer_idx</code> bu yüzden saklanıyor ama kullanılmıyor. <b>Prefix-LM maskesi</b> yok: şu an her şey nedensel, yani görüntü token'ları bile sadece kendinden öncekileri görüyor. <b>Padding</b> da yok. <code>attention_dropout</code> kullanılmıyor, çünkü çıkarımda zaten 0.
+</Callout>
+
+<Predict q="Nedensel maskede softmax'a giren bir satır tamamen yasaklı olabilir mi?" hint="Token i hangi token'ları görebiliyor?">
+<b>Hayır</b>: köşegen izinli (<span className="mono">j = i</span>), yani her token en azından kendisini görüyor. Yine de maskede <code>-inf</code> yerine <code>finfo.min</code> kullanılıyor, çünkü PaliGemma'daki maskelerde ve padding'de tamamen yasaklı satır çıkabilir ve <code>-inf</code> orada NaN üretir.
+</Predict>
+
+<Impact from="gemma.py: GemmaAttention.scaling, softmax" to="Gemma 2: query_pre_attn_scalar, attn_logit_softcapping, sliding_window">
+Gemma 2'de skor ölçeği <code>head_dim</code> yerine config'teki <code>query_pre_attn_scalar</code>'dan, skor <code>tanh</code> ile bir tavana (soft-capping) sıkıştırılıyor ve katmanların yarısında dikkat penceresi sınırlı. <code>head_dim</code>'in config'ten okunması ve <code>o_proj</code> girişinin <code>n_heads × head_dim</code> olması bu geçişi şimdiden kolaylaştırıyor.
+</Impact>

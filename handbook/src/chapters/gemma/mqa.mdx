@@ -1,0 +1,87 @@
+import { Callout, Fig, Predict, S, Impact, ConceptQ } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { BreakIt, ShapeTrace } from "../../components/misc";
+import { HeadMap, KvCacheSize, OrderMap, ExpandMemory } from "./w/Mqa";
+import { Link } from "react-router-dom";
+
+# MQA ve repeat_kv
+
+<p className="lead">Gemma 2B'nin attention'ında 8 sorgu head'i var ama anahtar ve değer için sadece <b>1</b> head. Bu tasarruf hesaptan değil, bellekten geliyor. <code>repeat_kv</code> ise tek bir KV head'ini hesap anında 8 sorgu head'ine "genişleten" küçük bir fonksiyon.</p>
+
+## Head'ler ve paylaşım
+
+Klasik multi-head attention'da Q, K ve V'nin her birinde aynı sayıda head var: her head kendi sorgusunu, anahtarını ve değerini üretiyor. Gemma 2B'de bunun yerine:
+
+- **Q**: 8 head, her biri 256 boyutlu. `q_proj`: 2048 → 8 × 256.
+- **K ve V**: 1 head. `k_proj`, `v_proj`: 2048 → 1 × 256.
+
+Buna **multi-query attention** (MQA) deniyor. Araya düşen durumlar (ör. 8 Q için 2 KV) **grouped-query attention** (GQA). Hepsi aynı fikrin ayarları: <span className="mono">n_rep = n_heads / n_kv_heads</span> Q head'i bir KV head'ini paylaşıyor.
+
+<Fig wide caption={<><b>Hangi sorgu head'i hangi KV head'ini kullanıyor?</b> Bir Q head'ine gel: aynı KV head'ini paylaşan head'ler vurgulanıyor. Düğmelerle MHA'dan MQA'ya geç. Gemma 2B en sağda, Gemma 2'nin 2B modeli 4 KV head ile aradaki GQA.</>}>
+<HeadMap />
+</Fig>
+
+## Tasarruf nerede?
+
+İlk bakışta "K ve V küçüldü, o zaman matris çarpımları da küçüldü" diye düşünülebilir. Ama her Q head'i yine tam bir skor tablosu üretiyor: 8 head için 8 tane <span className="mono">q @ kᵀ</span>. Skor hesabının işlem sayısı MQA'da da aynı kalıyor.
+
+Kazanç iki yerde:
+
+1. **Parametre**: `k_proj` ve `v_proj` 8 kat küçük.
+2. **KV cache**: Metin üretirken her token için, her katmanda K ve V **saklanıyor**. Saklanan şey KV head sayısıyla doğru orantılı. MQA'da 8 kat daha az.
+
+<Fig caption={<><b>KV cache, bf16.</b> Kaydırıcı dizi uzunluğu. PaliGemma 224'te 256 görüntü token'ı ve birkaç metin token'ı var, yani 260 civarı. Dizi uzadıkça fark megabaytlardan gigabaytlara çıkıyor.</>}>
+<KvCacheSize />
+</Fig>
+
+<Predict q="Q'nun head sayısı 8 kalıyor ama K ve V'nin 1 oluyor. Skor hesabı (q @ kᵀ) için gereken işlem sayısı MHA'ya göre ne olur?" hint="Her Q head'i yine tam bir T × T skor tablosu üretiyor.">
+<b>Aynı</b>. 8 head × T × T × 256 çarpma-toplama, K'nın kaç head'i olduğundan bağımsız. K'nın tek head olması sadece o head'in 8 kez <i>okunması</i> anlamına geliyor. Bu yüzden GQA/MQA'nın asıl kazancı <b>bellek ve bellek trafiği</b> (özellikle KV cache), hesap değil.
+</Predict>
+
+## repeat_kv
+
+Skoru `q @ k.transpose(2, 3)` ile hesaplıyoruz. Bu matris çarpımı için Q ve K'nın head sayıları eşleşmeli. Bu yüzden skordan hemen önce her KV head'i, onu kullanan Q head'lerinin sayısı kadar **tekrarlanıyor**.
+
+<CodeWalk file="gemma.py" symbol="repeat_kv" notes={[
+  { match: "B, n_kv_heads, T, head_dim = x.shape", title: "girdi", text: <>K ya da V, <S s="B, n_kv, T, hd" ax="B,H,T,hd" />. Gemma 2B'de <S s="1, 1, 260, 256" ax="B,H,T,hd" />.</> },
+  { match: "if n_rep == 1:", title: "tekrar gerekmiyorsa", text: <>MHA'da (<code>n_kv = n_heads</code>) hiçbir şey yapma. Gereksiz kopyayı önlüyor.</> },
+  { match: "x = x[:, :, None, :, :].expand(", title: "araya yeni eksen", text: <><S s="B, n_kv, T, hd" ax="B,H,T,hd" /> → <S s="B, n_kv, 1, T, hd" /> → <S s="B, n_kv, n_rep, T, hd" />. <code>expand</code> veriyi kopyalamıyor: yeni eksenin adımı (stride) 0, yani aynı veri n_rep kez "görünüyor".</> },
+  { match: "return x.reshape(B, n_kv_heads * n_rep", title: "eksenleri birleştir", text: <>(n_kv, n_rep) tek bir head eksenine dönüşüyor: <S s="B, n_heads, T, hd" ax="B,H,T,hd" />. <b>Sıra önemli</b>: n_rep, n_kv'nin sağında olduğu için Q head'i h, KV head'i <code>h // n_rep</code>'i kullanıyor.</> },
+]} />
+
+<ShapeTrace start={{ shape: "1, 1, 260, 256", ax: "B,H,T,hd", label: "k (Gemma 2B, projeksiyondan sonra)" }} steps={[
+  { op: "x[:, :, None]", code: "x[:, :, None, :, :]", shape: "1, 1, 1, 260, 256", ax: "B,H,P,T,hd", note: "araya boyutu 1 olan eksen" },
+  { op: ".expand(…, n_rep = 8, …)", code: ".expand(B, 1, 8, T, hd)", shape: "1, 1, 8, 260, 256", ax: "B,H,P,T,hd", note: "stride 0: veri kopyalanmadı" },
+  { op: ".reshape(B, 8, T, hd)", code: ".reshape(B, n_kv * n_rep, T, hd)", shape: "1, 8, 260, 256", ax: "B,H,T,hd", note: "Q ile aynı head sayısı" },
+]} />
+
+## Eksen sırası: sessiz bir hata
+
+Birleştirmede iki sıra mümkün ve ikisi de aynı şekli veriyor. Biri ağırlıkların beklediği düzen, öbürü Q head'lerini KV head'lerine dönüşümlü bağlıyor. İkisi arasındaki fark sadece n_kv &gt; 1 iken görünüyor. Gemma 2B'de n_kv = 1 olduğu için bu hata <b>fark edilmezdi</b>, ama Gemma 2'ye (4 KV head) geçince modeli sessizce bozardı. Bu yüzden kontrol, MQA'nın yanında GQA'yı da deniyor.
+
+<BreakIt title="eksenleri (n_kv, n_rep) yerine (n_rep, n_kv) sırasıyla birleştir (8 Q, 2 KV head)"
+  good={`x = x[:, :, None, :, :].expand(B, n_kv, n_rep, T, hd)   # ← araya n_kv'nin SAĞINA
+x.reshape(B, n_kv * n_rep, T, hd)             # Q0-Q3 → KV0, Q4-Q7 → KV1`}
+  bad={`x = x[:, None, :, :, :].expand(B, n_rep, n_kv, T, hd)   # ← araya n_kv'nin SOLUNA
+x.reshape(B, n_rep * n_kv, T, hd)             # Q0 → KV0, Q1 → KV1, Q2 → KV0, …`}
+  result={(b) => <OrderMap wrong={b} />} />
+
+## expand ne zaman kopyalıyor?
+
+`expand` veriyi kopyalamıyor, `reshape` ise birleştirilen eksenlere bağlı olarak bir görünüm ya da kopya üretiyor. Ölçüm, senin `repeat_kv`'nle:
+
+<Fig caption={<><b>MQA'da hiçbir şey kopyalanmıyor, GQA'da kopyalanıyor.</b> n_kv = 1 iken birleştirilen iki eksenden biri zaten 1 uzunlukta olduğu için <code>reshape</code> yeni bir bellek açmadan görünüm döndürebiliyor. n_kv = 2 iken (n_kv, n_rep) eksenleri, bellek düzeni sürekli olmadığı için kopyalanarak birleşiyor. Her iki durumda <b>saklanan</b> K/V küçük, çünkü tekrar yalnızca hesap anında.</>}>
+<ExpandMemory />
+</Fig>
+
+<ConceptQ n={3} q="GQA/MQA neyi azaltıyor: hesabı mı, belleği mi?">
+<b>Belleği</b>: KV cache'i ve K/V projeksiyon ağırlıklarını. Skor hesabı her Q head'i için yine yapılıyor. Metin üretiminde (her adımda bir token) zaten hesap değil, KV cache'i bellekten <i>okuma</i> darboğaz. MQA bu okumayı azalttığı için üretim hızlanıyor.
+</ConceptQ>
+
+<Callout kind="dikkat" title="head_dim config'ten geliyor">
+Gemma 2B'de <code>8 × 256 = 2048 = hidden_size</code>, yani <code>head_dim</code>'i <code>hidden_size / n_heads</code> ile hesaplamak tesadüfen doğru çıkıyor. Gemma 2'de değil (<code>8 × 256 ≠ 2304</code>). <code>GemmaAttention</code> bu yüzden <code>head_dim</code>'i config'ten okuyor ve <code>o_proj</code>'un girişi <code>n_heads × head_dim</code>. Bir sonraki sayfada <Link to="/gemma/attention">attention'ın tamamı</Link> var.
+</Callout>
+
+<Impact from="gemma.py: repeat_kv(k, n_rep)" to="KV cache: saklanan tensör">
+KV cache eklendiğinde <b>repeat_kv'den önceki</b> K ve V (1 head) saklanacak. Genişletilmiş hali saklanırsa 8 kat bellek harcanır ve MQA'nın bütün kazancı kaybolur.
+</Impact>

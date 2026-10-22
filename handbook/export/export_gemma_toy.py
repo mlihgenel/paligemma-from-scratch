@@ -3,7 +3,8 @@
 Oyuncak config: hidden 256, intermediate 2048, 6 katman. Embedding'ler gerçek Gemma'nın eleman
 dağılımıyla (std ≈ 0.186), RMSNorm ağırlıkları gerçek checkpoint'in ilk 256 boyutundan
 (pg_slices.json), MLP ağırlıkları rastgele (std 0.02, HF initializer_range). Attention yerine
-check_gemma.py'deki gibi rastgele bir linear stub.
+rastgele bir linear stub: bu deneyler residual akışının davranışını ölçüyor, attention'ın değil.
+Gerçek GemmaAttention'ın deneyleri export_attention.py'de.
 
 "Ne bozulur?" deneyleri için katmanın forward'ı bazı varyantlarda burada yeniden yazılıyor ama
 alt modüller (norm'lar, MLP) her zaman senin sınıfların.
@@ -40,14 +41,29 @@ class Stub(nn.Module):
         self.proj = nn.Linear(d, d, bias=False)
         nn.init.normal_(self.proj.weight, std=0.02)
 
-    def forward(self, x):
+    def forward(self, x, *args, **kwargs):   # katman artık (x, position_embeddings, attention_mask) geçiriyor
         return self.proj(x)
+
+
+def layer_inputs(h):
+    """Katmanın attention'a geçirdiği ek girdiler. Stub kullanmıyor ama imza gerçek olsun diye veriyoruz."""
+    B_, T_, _ = h.shape
+    pe = gemma.GemmaRotaryEmbedding(TOY["head_dim"])(h, torch.arange(T_).unsqueeze(0).expand(B_, -1))
+    return pe, gemma.make_causal_mask(T_, h.dtype, h.device)
 
 
 def build_model(slices):
     torch.manual_seed(0)
     cfg = gemma.GemmaConfig(**TOY)
-    model = gemma.GemmaModel(cfg).eval()
+    # Gerçek GemmaAttention'ın q/k/v/o başlangıç ağırlıkları rastgele sayı tüketir ve MLP'lerin
+    # başlangıcını kaydırırdı. Attention'sız sürümle aynı sayıları üretmek için kurulurken geçici
+    # olarak Identity koyuyoruz, sonra Stub'a değiştiriyoruz.
+    real_attention = gemma.GemmaAttention
+    gemma.GemmaAttention = lambda config, layer_idx: nn.Identity()
+    try:
+        model = gemma.GemmaModel(cfg).eval()
+    finally:
+        gemma.GemmaAttention = real_attention
     il = load_slice(slices, slices["norms"]["input_layernorm"])
     pa = load_slice(slices, slices["norms"]["post_attention_layernorm"])
     fn = load_slice(slices, slices["norms"]["final"])
@@ -65,7 +81,7 @@ def build_model(slices):
 
 # --- Katman varyantları (alt modüller senin) --------------------------------------------------
 def layer_normal(layer, h):
-    return layer(h)                                   # senin GemmaDecoderLayer.forward'ın
+    return layer(h, *layer_inputs(h))                 # senin GemmaDecoderLayer.forward'ın
 
 
 def layer_residual_after_norm(layer, h):
@@ -136,7 +152,7 @@ def main():
         ours_out = model(emb)
         h = emb * torch.tensor(D ** 0.5)
         for layer in model.layers:
-            h = layer(h)
+            h = layer(h, *layer_inputs(h))
         doc["stream_check_maxdiff"] = (model.norm(h) - ours_out).abs().max().item()
 
         # B) √d: embedding büyüklükleri (gerçek satırlardan) ve ölçek
@@ -216,8 +232,8 @@ def main():
         zero_layer.self_attn = layer.self_attn
         zero_layer.mlp = layer.mlp
         doc["norm_swap"] = {
-            "real_w": (layer(hin) - swapped(layer, hin)).abs().max().item(),
-            "zero_w": (zero_layer(hin) - swapped(zero_layer, hin)).abs().max().item(),
+            "real_w": (layer(hin, *layer_inputs(hin)) - swapped(layer, hin)).abs().max().item(),
+            "zero_w": (zero_layer(hin, *layer_inputs(hin)) - swapped(zero_layer, hin)).abs().max().item(),
         }
 
         # F) GeGLU iç değerleri (katman 0, gerçek akış girdisiyle)

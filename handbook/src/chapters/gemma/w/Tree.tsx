@@ -12,7 +12,8 @@ const WHAT: Record<string, [string, string?]> = {
   Embedding: ["Token id → tablo satırı (lookup). Hesap değil, indeksleme.", "/gemma/sqrt-d"],
   ModuleList: ["Alt modülleri kaydeden liste. Kendisi forward yapmaz.", "/gemma/model"],
   GemmaDecoderLayer: ["Pre-norm katman: x + attn(norm(x)), sonra x + mlp(norm(x)).", "/gemma/katman"],
-  Identity: ["Şimdilik attention yerine: girdiyi aynen döndürür. Sonra yerine GemmaAttention gelecek.", "/gemma/katman"],
+  GemmaAttention: ["8 sorgu head'i, 1 KV head'i (MQA). softmax(Q Kᵀ / √256 + maske) V, sonra o_proj. RoPE Q ve K'ya.", "/gemma/attention"],
+  GemmaRotaryEmbedding: ["RoPE için cos/sin tablosu. Parametresi yok: frekanslar sabit bir buffer.", "/gemma/rope"],
   GemmaMLP: ["GeGLU: down(gelu_tanh(gate(x)) ⊙ up(x)). Token'lar arası karışma yok.", "/gemma/geglu"],
   GemmaRMSNorm: ["x / rms(x) · (1 + w). Ortalama çıkarılmaz, bias yok, hesap float32'de.", "/gemma/rmsnorm"],
   Linear: ["y = x Wᵀ (+ b). Son eksen dönüşür, diğer eksenler aynen kalır."],
@@ -55,7 +56,7 @@ export function ModuleTreeView({ root = "language_model", initialSel, initialOpe
           </span>
           <span className="mono" style={{ fontSize: 13 }}>{d === 0 ? name : short}</span>
           {isLayers && <span className="pill" style={{ fontSize: 10.5 }}>×{n.children.length}</span>}
-          <span className="small" style={{ color: n.cls === "Identity" ? "var(--warn)" : "var(--ax-I)" }}>{n.cls}</span>
+          <span className="small" style={{ color: "var(--ax-I)" }}>{n.cls}</span>
           <span className="small muted mono" style={{ marginLeft: "auto" }}>{n.params ? fmtCount(n.params) : "0"}</span>
         </div>
         {isOpen && kids.map((k) => render(join(name, k), d + 1))}
@@ -121,31 +122,28 @@ export function ParamShare() {
   const emb = g("language_model.model.embed_tokens");
   const vision = g("vision_tower");
   const proj = g("multi_modal_projector");
-  const t = data.config.text;
-  const attn = layers.length * (t.hidden_size * t.num_attention_heads * t.head_dim * 2 + t.hidden_size * t.num_key_value_heads * t.head_dim * 2);
+  const attn = layers.reduce((s, l) => s + g(l.name + ".self_attn"), 0);
   const total = data.params_unique;
   const items = [
     { label: "SigLIP (görüntü)", value: vision, color: "var(--ax-T)" },
     { label: "projektör", value: proj, color: "var(--ax-I)" },
     { label: "embed_tokens = lm_head", value: emb, color: "var(--ax-V)" },
     { label: "18 × GemmaMLP", value: mlp, color: "var(--ax-D)" },
+    { label: "18 × GemmaAttention", value: attn, color: "var(--ax-H)" },
     { label: "RMSNorm'lar (37)", value: norms, color: "var(--ax-hd)" },
   ];
   return (
     <div style={{ fontFamily: "var(--sans)" }}>
       <div style={{ display: "flex", height: 34, borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
-        {items.map((i) => <div key={i.label} title={`${i.label}: ${fmtCount(i.value)}`} style={{ width: `${(i.value / (total + attn)) * 100}%`, background: i.color, minWidth: i.value ? 2 : 0 }} />)}
-        <div title={`attention (henüz yok): ${fmtCount(attn)}`} style={{ width: `${(attn / (total + attn)) * 100}%`, background: "repeating-linear-gradient(45deg, var(--bg-sunk), var(--bg-sunk) 4px, var(--border-strong) 4px, var(--border-strong) 8px)" }} />
+        {items.map((i) => <div key={i.label} title={`${i.label}: ${fmtCount(i.value)}`} style={{ width: `${(i.value / total) * 100}%`, background: i.color, minWidth: i.value ? 2 : 0 }} />)}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: "6px 16px", marginTop: 10, fontSize: 13.5 }}>
         {items.map((i) => (
           <div key={i.label}><span style={{ color: i.color }}>■</span> {i.label}: <b className="mono">{fmtCount(i.value)}</b> <span className="muted">({((i.value / total) * 100).toFixed(1)}%)</span></div>
         ))}
-        <div><span className="muted">▨</span> attention (henüz yok): <b className="mono">{fmtCount(attn)}</b> <span className="muted">henüz yok</span></div>
       </div>
       <div className="small muted" style={{ marginTop: 8 }}>
-        Şu an toplam <b className="mono">{fmtCount(total)}</b> tekil parametre (<code>model.parameters()</code> bağlı tensörü bir kez sayar).
-        Attention gelince ≈ <b className="mono">{fmtCount(total + attn)}</b>, yani "3B".
+        Toplam <b className="mono">{fmtCount(total)}</b> tekil parametre (<code>model.parameters()</code> bağlı tensörü bir kez sayar). Modelin adındaki "3B" bu sayıdan geliyor.
       </div>
     </div>
   );

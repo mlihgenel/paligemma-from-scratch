@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 
 # Gemma haritası
 
-<p className="lead">Bu bölüm Gemma'nın attention dışındaki her şeyini kapsıyor. Ayrıntıya girmeden önce bütün parçaların nerede durduğuna ve modelin ağırlığının nerede toplandığına bakalım.</p>
+<p className="lead">Bu bölümün ilk yarısı Gemma'nın attention dışındaki parçalarını, son üç sayfası attention'ı anlatıyor. Ayrıntıya girmeden önce bütün parçaların nerede durduğuna ve modelin ağırlığının nerede toplandığına bakalım.</p>
 
 Gemma'nın işi tek cümleyle şu: <S s="B, T" /> token id'lerini alıp <S s="B, T, V" /> logit'lere çevirmek. Arada her token bir <S s="D" /> vektörü olarak 18 katman boyunca taşınıyor. PaliGemma'da girişteki token'ların 256'sı görüntüden geliyor.
 
@@ -14,13 +14,13 @@ Gemma'nın işi tek cümleyle şu: <S s="B, T" /> token id'lerini alıp <S s="B,
 
 Aşağıdaki ağaç, senin `gemma.py` ve `paligemma.py` sınıflarının **gerçek config** ile kurulmuş hali. Giriş/çıkış şekilleri gerçek bir forward sırasında yakalandı (260 token: 256 görüntü + `<bos>` + "caption tr" + `\n`). Bir düğüme tıkla.
 
-<Fig wide caption={<><b>Senin modelin, meta cihazında.</b> ✓ işaretli anahtarlar gerçek checkpoint'te de var, yani ağırlık yüklenince doğrudan oturacak. <code>self_attn</code> şimdilik <code>Identity</code>, parametresi yok.</>}>
+<Fig wide caption={<><b>Senin modelin, meta cihazında.</b> ✓ işaretli anahtarlar gerçek checkpoint'te de var, yani ağırlık yüklenince doğrudan oturacak. <code>self_attn</code> altındaki dört <code>Linear</code> da checkpoint'le eşleşiyor. Tek ○ olan <code>lm_head.weight</code>: tying yüzünden checkpoint'te yok (<Link to="/gemma/tying">4.8</Link>).</>}>
 <ModuleTreeView />
 </Fig>
 
 ## Parametreler nerede?
 
-<Fig caption={<><b>Modelin ağırlığı MLP'de.</b> 18 MLP toplamın üçte ikisi. Embedding tablosu (= lm_head, bkz. <Link to="/gemma/tying">4.8</Link>) beşte bir. 37 RMSNorm'un toplamı ise sadece 75 bin.</>}>
+<Fig caption={<><b>Modelin ağırlığı MLP'de.</b> 18 MLP toplamın yüzde 62'si. Embedding tablosu (= lm_head, bkz. <Link to="/gemma/tying">4.8</Link>) beşte bire yakın. 18 attention yüzde 6'sı kadar: MQA sayesinde k_proj ve v_proj çok küçük. 37 RMSNorm'un toplamı ise sadece 75 bin.</>}>
 <ParamShare />
 </Fig>
 
@@ -57,3 +57,6 @@ Gemma tarafında tek bir forward'da tensörün başına gelen her şey. Dikdört
 | <Link to="/gemma/katman">4.6</Link> | Decoder katmanının iskeleti | `GemmaDecoderLayer` |
 | <Link to="/gemma/model">4.7</Link> | ModuleList, son norm | `GemmaModel` |
 | <Link to="/gemma/tying">4.8</Link> | Weight tying, `logits.float()` | `GemmaForCausalLM`, `tie_weights` |
+| <Link to="/gemma/rope">4.9</Link> | RoPE: konumu dönerek vermek, rotate_half, float32 açılar | `GemmaRotaryEmbedding`, `rotate_half`, `apply_rotary_pos_emb` |
+| <Link to="/gemma/mqa">4.10</Link> | MQA/GQA: 8 Q, 1 KV head, KV cache boyutu | `repeat_kv` |
+| <Link to="/gemma/attention">4.11</Link> | Skor, 1/√head_dim, nedensel maske, katmana bağlanış | `GemmaAttention`, `make_causal_mask` |

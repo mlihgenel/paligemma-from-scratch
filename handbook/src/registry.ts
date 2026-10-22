@@ -45,6 +45,9 @@ export const PAGES: Page[] = [
   { path: "/gemma/katman", num: "4.6", title: "Decoder katmanı", blurb: "Norm → attention → ⊕, norm → MLP → ⊕.", part: "lang", arch: ["gemma"], Component: mdx(() => import("./chapters/gemma/katman.mdx")) },
   { path: "/gemma/model", num: "4.7", title: "GemmaModel", blurb: "18 katman üst üste ve son norm.", part: "lang", arch: ["gemma"], Component: mdx(() => import("./chapters/gemma/model.mdx")) },
   { path: "/gemma/tying", num: "4.8", title: "lm_head ve weight tying", blurb: "Aynı tablo hem girişte hem çıkışta: vektörden kelimeye.", part: "lang", arch: ["gemma", "output"], Component: mdx(() => import("./chapters/gemma/tying.mdx")) },
+  { path: "/gemma/rope", num: "4.9", title: "RoPE: konum, dönerek", blurb: "Q ve K konumlarına göre dönüyor: skor yalnızca konum farkına bağlı.", part: "lang", arch: ["gemma"], Component: mdx(() => import("./chapters/gemma/rope.mdx")) },
+  { path: "/gemma/mqa", num: "4.10", title: "MQA ve repeat_kv", blurb: "8 sorgu head'i, 1 KV head'i: tasarruf bellekten geliyor.", part: "lang", arch: ["gemma"], Component: mdx(() => import("./chapters/gemma/mqa.mdx")) },
+  { path: "/gemma/attention", num: "4.11", title: "GemmaAttention", blurb: "Skor, nedensel maske, softmax ve katmana bağlanış.", part: "lang", arch: ["gemma"], Component: mdx(() => import("./chapters/gemma/attention.mdx")) },
 ];
 
 /** Eski adresler: yer imleri kırılmasın */

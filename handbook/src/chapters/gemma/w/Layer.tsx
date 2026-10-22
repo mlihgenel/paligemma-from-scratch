@@ -9,7 +9,7 @@ const FLOW = [
   { id: "in", label: "hidden_states", sub: "akış", y: 0 },
   { id: "res1", label: "residual = …", sub: "kopya sakla", y: 1 },
   { id: "n1", label: "input_layernorm", sub: "RMSNorm", y: 2 },
-  { id: "attn", label: "self_attn", sub: "şimdilik Identity", y: 3 },
+  { id: "attn", label: "self_attn", sub: "GemmaAttention", y: 3 },
   { id: "add1", label: "residual + …", sub: "⊕ akışa yaz", y: 4 },
   { id: "res2", label: "residual = …", sub: "kopya sakla", y: 5 },
   { id: "n2", label: "post_attention_layernorm", sub: "RMSNorm (MLP girişi)", y: 6 },
@@ -21,7 +21,7 @@ export function LayerFlow({ at }: { at?: number } = {}) {
   const [i0, setI] = useState(0);
   const i = at ?? i0;
   const W = 560, rowH = 46, x0 = 150;
-  const color = (id: string) => id.startsWith("n") ? "var(--ax-hd)" : id === "attn" ? "var(--fg-faint)" : id === "mlp" ? "var(--ax-D)" : id.startsWith("add") ? "var(--accent)" : "var(--ax-T)";
+  const color = (id: string) => id.startsWith("n") ? "var(--ax-hd)" : id === "attn" ? "var(--ax-T)" : id === "mlp" ? "var(--ax-D)" : id.startsWith("add") ? "var(--accent)" : "var(--ax-T)";
   return (
     <div>
       <div className="row" style={{ gap: 8, marginBottom: 8, alignItems: "center" }}>

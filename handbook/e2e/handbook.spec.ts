@@ -2,7 +2,7 @@
 // Çalıştır: npm run dev (ayrı terminalde), sonra npx playwright test
 import { expect, test } from "@playwright/test";
 
-const PAGES = ["/", "/uctan-uca", "/buyuk-resim", "/goruntu", "/encoder", "/kopru", "/gemma", "/gemma/akis", "/gemma/sqrt-d", "/gemma/rmsnorm", "/gemma/geglu", "/gemma/katman", "/gemma/model", "/gemma/tying"];
+const PAGES = ["/", "/uctan-uca", "/buyuk-resim", "/goruntu", "/encoder", "/kopru", "/gemma", "/gemma/akis", "/gemma/sqrt-d", "/gemma/rmsnorm", "/gemma/geglu", "/gemma/katman", "/gemma/model", "/gemma/tying", "/gemma/rope", "/gemma/mqa", "/gemma/attention"];
 
 for (const p of PAGES) {
   test(`sayfa ${p}`, async ({ page }) => {

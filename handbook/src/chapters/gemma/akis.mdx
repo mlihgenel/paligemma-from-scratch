@@ -34,7 +34,7 @@ Bu satırın iki önemli sonucu var.
 **Dal okur.** Attention bloğu akıştan bir **kopya** alıyor ve `input_layernorm`'dan geçiriyor: pembe çubuklar. Kopyanın RMS'i 1, akış ne kadar büyük olursa olsun. Akışın kendisi şeritte değişmeden bekliyor (kodda `residual` değişkeni).
 </Step>
 <Step>
-**Dal hesaplar.** Kopya `self_attn`'den geçiyor ve bir **güncelleme** üretiyor: turuncu çubuklar. Şu an attention `Identity`, burada yer tutucu olarak rastgele bir dönüşüm var (check_gemma'daki stub gibi).
+**Dal hesaplar.** Kopya `self_attn`'den geçiyor ve bir **güncelleme** üretiyor: turuncu çubuklar. Bu sayfadaki deneylerde dalın içinde attention yerine rastgele bir linear dönüşüm var: akışın davranışını ölçmek için dalın ne hesapladığı önemsiz, sadece akışa bir güncelleme yazması önemli. Gerçek attention <Link to="/gemma/attention">4.11</Link>'de.
 </Step>
 <Step>
 **⊕ Akışa yaz.** Güncelleme şeride iniyor ve akışa **toplanıyor**: <span className="mono">h ← h + f(norm(h))</span>. Mavi çubukların hepsi biraz değişti ama hiçbiri yeniden ölçeklenmedi. Embedding'deki bilgi hâlâ orada.
@@ -52,7 +52,7 @@ Bu satırın iki önemli sonucu var.
 <CodeWalk file="gemma.py" symbol="GemmaDecoderLayer.forward" notes={[
   { match: "residual = hidden_states", title: "Akıştan kopya", text: <>Akışın o anki değeri saklanıyor. <b>Norm'dan önce</b> saklanması kritik: residual norm'lu kopyadan alınırsa akışın kendisi normalize edilmiş olur (aşağıdaki "Ne bozulur?").</> },
   { match: "self.input_layernorm(hidden_states)", title: "Dal: norm", text: <>Bu satırdan sonra <code>hidden_states</code> artık akışın kendisi değil, normalize edilmiş bir kopya. Akış <code>residual</code> değişkeninde bekliyor. Şekil değişmiyor: <S s="B, T, D" />.</> },
-  { match: "self.self_attn(hidden_states)", title: "Dal: attention (şimdilik Identity)", text: <>Attention yazılınca token'lar arası bilgi buradan geçecek. Şu an <code>nn.Identity</code>, kopyayı aynen döndürüyor. Yani bu blok şu an <code>h + norm(h)</code> hesaplıyor. Bu sayfanın deneylerinde attention yerine <code>check_gemma.py</code>'deki gibi rastgele bir linear katman var.</> },
+  { match: "self.self_attn(hidden_states,", title: "Dal: attention", text: <>Token'lar arası bilgi buradan geçiyor: bu dal, akıştaki her token'ın başka token'lardan okuyup akışa yazdığı tek yer. Şekil değişmiyor: <S s="B, T, D" />. Dal norm'lu kopyanın yanında RoPE tablosunu ve maskeyi de alıyor (<Link to="/gemma/attention">4.11</Link>).</> },
   { match: "hidden_states = residual + hidden_states", title: "Yazma: akışa ekle", text: <>Otoyolun ⊕ noktası. Dalın çıktısı akışa toplanıyor. İki tensör de <S s="B, T, D" />, eleman eleman toplama.</> },
   { match: "self.post_attention_layernorm(hidden_states)", title: "İkinci dal: norm", text: <>Aynı desen, bu kez MLP için. Adı yanıltıcı: "post attention" denmesinin nedeni attention'dan <i>sonra</i> gelmesi, ama aslında MLP'nin <i>girişindeki</i> norm. Bkz. <Link to="/gemma/katman">4.6</Link>.</> },
   { match: "hidden_states = self.mlp(hidden_states)", title: "Dal: MLP", text: <>GeGLU. Her token ayrı işleniyor. Bkz. <Link to="/gemma/geglu">4.5</Link>.</> },
@@ -97,8 +97,8 @@ Pre-norm'da çıkış, girişin <i>kendisini</i> içeriyor: <span className="mon
 <UpdateSizes />
 </Fig>
 
-<Predict q="Şu anki kodunda self_attn = nn.Identity(). Attention bloğu tam olarak ne hesaplıyor?">
-<code>residual + Identity(input_layernorm(h))</code> = <b>h + norm(h)</b>. Yani attention bloğu şu an akışa kendi normalize edilmiş kopyasını ekliyor: anlamsız ama zararsız bir yer tutucu. <code>check_gemma.py</code> bu yüzden testte iki tarafa da aynı rastgele <code>StubAttention</code>'ı koyuyor. Yoksa HF'nin gerçek attention'ıyla senin Identity'n karşılaştırılırdı.
+<Predict q="Bu sayfanın oyuncak modelinde self_attn yerine rastgele bir Linear katman var. Neden gerçek GemmaAttention değil?" hint="Deney neyi ölçüyor?">
+Deneyler <b>akışın</b> davranışını ölçüyor: norm'ların yeri, residual'ın nerede saklandığı, ×√d. Bunun için dalın içinde ne hesaplandığı önemsiz, tek şart dalın akışa bir güncelleme yazması. Ölçeği (std 0.02) bizim kontrol ettiğimiz rastgele bir Linear bunun en sade hali. Gerçek attention de aynı iki satırla takılıyor (norm, dal, ⊕), ona <Link to="/gemma/attention">4.11</Link>'de bakıyoruz.
 </Predict>
 
 <Impact from="gemma.py: residual = hidden_states" to="Gemma 2: sandwich norm">
