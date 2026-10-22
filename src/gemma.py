@@ -107,6 +107,84 @@ def apply_rotary_pos_emb(
     return q_embed, k_embed
 
 
+# GQA/MQA: K ve V'de Q'dan az head var (Gemma 2B'de 1 tane). Skoru hesaplamak için her KV head'i,
+# kendisini kullanan Q head'lerinin sayısı (n_rep = n_heads / n_kv_heads) kadar tekrarlanıyor.
+# Bellekte kopya tutan asıl K/V (cache) küçük kalıyor, tekrar sadece hesap anında yapılıyor
+def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
+    B, n_kv_heads, T, head_dim = x.shape
+    if n_rep == 1:
+        return x
+    # [B, n_kv, T, hd] -> [B, n_kv, 1, T, hd] -> [B, n_kv, n_rep, T, hd]: expand veri kopyalamıyor, sadece görünüm
+    x = x[:, :, None, :, :].expand(B, n_kv_heads, n_rep, T, head_dim)
+    # Birleştirme: ilk n_rep head ilk KV head'in kopyası, sonraki n_rep head ikincinin... (Q head'leri de aynı sırayla gruplanıyor)
+    return x.reshape(B, n_kv_heads * n_rep, T, head_dim)           # [B, n_heads, T, hd]
+
+
+# Toplanan maske: izinli yerler 0, yasak yerler en küçük sayı. Token i sadece j <= i olanlara bakabilir.
+# -inf yerine finfo.min: tamamen yasaklanmış bir satır -inf ile softmax'ta NaN verir, finfo.min ile eşit ağırlık verir
+def make_causal_mask(T: int, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+    mask = torch.full((T, T), torch.finfo(dtype).min, dtype=dtype, device=device)
+    mask = torch.triu(mask, diagonal=1)          # köşegenin üstü (j > i) yasak, geri kalan 0
+    return mask[None, None]                       # [1, 1, T, T]: batch ve head eksenlerinde yayılıyor
+
+
+# Her token, kendi Q'sunu bütün K'larla karşılaştırıp (skor) V'lerin ağırlıklı toplamını alıyor.
+# Q 8 head, K/V 1 head (MQA). KV cache henüz yok: tam dizi tek seferde işleniyor (aşama 7'de cache eklenecek)
+class GemmaAttention(nn.Module):
+    def __init__(self, config: GemmaConfig, layer_idx: int):
+        super().__init__()
+        self.config = config
+        self.layer_idx = layer_idx
+        # head_dim config'ten okunuyor: hidden_size / n_heads değil (Gemma 2'de ikisi farklı)
+        self.head_dim = config.head_dim
+        self.num_heads = config.num_attention_heads
+        self.num_kv_heads = config.num_key_value_heads
+        self.num_kv_groups = self.num_heads // self.num_kv_heads      # n_rep: bir KV head'i kaç Q head'e hizmet ediyor
+        self.scaling = self.head_dim ** -0.5
+
+        # Q tam sayıda head üretiyor, K/V az. Burada tasarruf: k_proj ve v_proj küçük
+        self.q_proj = nn.Linear(config.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
+        self.k_proj = nn.Linear(config.hidden_size, self.num_kv_heads * self.head_dim, bias=config.attention_bias)
+        self.v_proj = nn.Linear(config.hidden_size, self.num_kv_heads * self.head_dim, bias=config.attention_bias)
+        # Girişi hidden_size'a eşit olmak zorunda değil: num_heads * head_dim (Gemma 2'de 8 * 256 != 2304)
+        self.o_proj = nn.Linear(self.num_heads * self.head_dim, config.hidden_size, bias=config.attention_bias)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,                         # [B, T, D]
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],   # (cos, sin), her biri [B, T, head_dim]
+        attention_mask: torch.Tensor | None = None,          # [B, 1, T, T], toplanan maske (izinli 0, yasak -inf)
+    ) -> torch.Tensor:
+        B, T, _ = hidden_states.shape
+
+        # Projeksiyon, sonra son boyutu head'lere böl, head eksenini öne al (head'ler birbirinden bağımsız çalışacak)
+        q = self.q_proj(hidden_states).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)      # [B, n_heads, T, hd]
+        k = self.k_proj(hidden_states).view(B, T, self.num_kv_heads, self.head_dim).transpose(1, 2)   # [B, n_kv, T, hd]
+        v = self.v_proj(hidden_states).view(B, T, self.num_kv_heads, self.head_dim).transpose(1, 2)   # [B, n_kv, T, hd]
+
+        # RoPE sadece Q ve K'ya. Konum, skorun içine girsin diye; V taşıdığı içeriğe dokunulmuyor
+        cos, sin = position_embeddings
+        q, k = apply_rotary_pos_emb(q, k, cos, sin)
+
+        # K/V'yi geçici olarak Q'nun head sayısına genişlet (sadece hesap anında)
+        k = repeat_kv(k, self.num_kv_groups)                  # [B, n_heads, T, hd]
+        v = repeat_kv(v, self.num_kv_groups)                  # [B, n_heads, T, hd]
+
+        # Skor: [B, n_heads, T, hd] @ [B, n_heads, hd, T] -> [B, n_heads, T, T]; scores[i, j] = i. token'ın j. token'a ilgisi
+        # sqrt(head_dim)'e bölme: yoksa hd büyüdükçe skorlar büyür, softmax tek bir token'a sıkışır
+        scores = torch.matmul(q, k.transpose(2, 3)) * self.scaling
+        if attention_mask is not None:
+            scores = scores + attention_mask                  # yasak yerler -inf -> softmax'ta 0
+        # Softmax float32'de: bf16'da toplam yuvarlama hatası birikiyor, çıkışı tekrar orijinal dtype'a çeviriyoruz
+        weights = F.softmax(scores, dim=-1, dtype=torch.float32).to(q.dtype)    # [B, n_heads, T, T], satırlar 1'e toplanıyor
+
+        # Ağırlıklı V toplamı: [B, n_heads, T, T] @ [B, n_heads, T, hd] -> [B, n_heads, T, hd]
+        out = torch.matmul(weights, v)
+        # Head'leri tekrar yan yana birleştir: [B, n_heads, T, hd] -> [B, T, n_heads, hd] -> [B, T, n_heads * hd]
+        out = out.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
+        return self.o_proj(out)                               # [B, T, n_heads * hd] -> [B, T, D]
+
+
 # Pre-norm katman: x = x + attn(norm(x)), sonra x = x + mlp(norm(x)). Residual akışının kendisi hiç normalize edilmiyor
 class GemmaDecoderLayer(nn.Module): 
     def __init__(self, config: GemmaConfig, layer_idx: int):
@@ -114,17 +192,22 @@ class GemmaDecoderLayer(nn.Module):
         self.config = config 
         self.hidden_size = config.hidden_size 
         
-        self.self_attn = nn.Identity()
+        self.self_attn = GemmaAttention(config, layer_idx)
         self.mlp = GemmaMLP(config)
         self.input_layernorm = GemmaRMSNorm(self.hidden_size, eps=config.rms_norm_eps)
         # Adına rağmen MLP'nin girişindeki norm (Llama'dan kalma ad). Gemma 2'de aynı ad attention çıktısına uygulanıyor
         self.post_attention_layernorm = GemmaRMSNorm(self.hidden_size, eps=config.rms_norm_eps) 
         
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor: 
+    def forward(
+        self,
+        hidden_states: torch.Tensor,                              # [B, T, D]
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],   # (cos, sin), her biri [B, T, head_dim]
+        attention_mask: torch.Tensor | None = None,               # [B or 1, 1, T, T], toplanan maske
+    ) -> torch.Tensor:
         # Attention bloğu. Residual norm'dan ÖNCE saklanıyor, yoksa akışın kendisi normalize edilmiş olur
         residual = hidden_states                                  # [B, T, D]
         hidden_states = self.input_layernorm(hidden_states)
-        hidden_states = self.self_attn(hidden_states)
+        hidden_states = self.self_attn(hidden_states, position_embeddings, attention_mask)
         hidden_states = residual + hidden_states 
         
         # MLP bloğu, aynı desen
@@ -143,17 +226,30 @@ class GemmaModel(nn.Module):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=self.padding_idx)
-        # Düz liste parametreleri kaydetmez, Sequential ise aşama 5'te mask/position_ids geçirmeye izin vermez
+        # Düz liste parametreleri kaydetmez, Sequential ise mask/position_ids geçirmeye izin vermez
         self.layers = nn.ModuleList(
             [GemmaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
         # Residual akışı katmanlar boyunca hiç normalize edilmiyor, lm_head'den önce son bir kez
         self.norm = GemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        # cos/sin her katmanda aynı (hepsinin head_dim ve base'i aynı), bu yüzden bir kez burada hesaplanıp katmanlara veriliyor
+        self.rotary_emb = GemmaRotaryEmbedding(config.head_dim, base=config.rope_theta)
 
     def get_input_embeddings(self) -> nn.Embedding:
         return self.embed_tokens
 
-    def forward(self, inputs_embeds: torch.Tensor) -> torch.Tensor:   # [B, T, D] -> [B, T, D]
+    def forward(
+        self,
+        inputs_embeds: torch.Tensor,                           # [B, T, D]
+        attention_mask: torch.Tensor | None = None,            # [B or 1, 1, T, T], toplanan maske. Yoksa nedensel
+        position_ids: torch.Tensor | None = None,              # [B, T]. Yoksa 0..T-1
+    ) -> torch.Tensor:                                         # [B, T, D]
+        B, T, _ = inputs_embeds.shape
+        if position_ids is None:
+            position_ids = torch.arange(T, device=inputs_embeds.device).unsqueeze(0).expand(B, -1)
+        if attention_mask is None:
+            attention_mask = make_causal_mask(T, inputs_embeds.dtype, inputs_embeds.device)
+
         hidden_states = inputs_embeds
         # Embedding'leri otoyolun ölçeğine (eleman başına ~1) taşı. Görsel token'lar paligemma.py'de
         # sqrt(d)'ye bölündüğü için onlar değişmeden kalıyor. Ölçek hidden_states'in dtype'ında:
@@ -161,8 +257,9 @@ class GemmaModel(nn.Module):
         normalizer = torch.tensor(self.config.hidden_size ** 0.5, dtype=hidden_states.dtype)
         hidden_states = hidden_states * normalizer
 
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)   # (cos, sin), [B, T, head_dim]
         for decoder_layer in self.layers:
-            hidden_states = decoder_layer(hidden_states)          # aşama 5: + attention_mask, position_ids
+            hidden_states = decoder_layer(hidden_states, position_embeddings, attention_mask)
 
         hidden_states = self.norm(hidden_states)
         return hidden_states
@@ -183,8 +280,13 @@ class GemmaForCausalLM(nn.Module):
     def tie_weights(self) -> None:
         self.lm_head.weight = self.model.embed_tokens.weight
 
-    def forward(self, inputs_embeds: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.model(inputs_embeds)  # [B, T, hidden_size]
+    def forward(
+        self,
+        inputs_embeds: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        hidden_states = self.model(inputs_embeds, attention_mask, position_ids)  # [B, T, hidden_size]
         logits = self.lm_head(hidden_states)       # [B, T, vocab_size]
         return logits.float()
     

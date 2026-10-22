@@ -6,8 +6,10 @@ yani her yeni sınıfı yazdıkça script'i yeniden çalıştırabilirsin:
     GemmaRMSNorm       -> HF GemmaRMSNorm (float32 ve bfloat16 girdiyle)
     GemmaMLP           -> HF GemmaMLP
     GemmaRotaryEmbedding -> HF GemmaRotaryEmbedding + apply_rotary_pos_emb (cos/sin ve döndürülmüş Q/K)
-    GemmaDecoderLayer  -> HF GemmaDecoderLayer (attention yerine iki tarafta da aynı geçici modül)
-    GemmaModel         -> HF GemmaModel (embedding ölçeği + bütün katmanlar + son norm)
+    repeat_kv          -> HF repeat_kv (MQA ve n_kv > 1 olan GQA durumları)
+    GemmaAttention     -> HF GemmaAttention (eager, nedensel maskeli ve maskesiz)
+    GemmaDecoderLayer  -> HF GemmaDecoderLayer (attention + MLP + iki norm, nedensel maskeyle)
+    GemmaModel         -> HF GemmaModel (embedding ölçeği + RoPE + nedensel maske + bütün katmanlar + son norm)
     GemmaForCausalLM   -> HF GemmaForCausalLM (logit'ler ve weight tying)
 
 Çalıştır (proje kökünden):
@@ -23,12 +25,13 @@ from pathlib import Path
 import torch
 from transformers import GemmaConfig as HFGemmaConfig
 from transformers import GemmaForCausalLM as HFGemmaForCausalLM
-from torch import nn
+from transformers.models.gemma.modeling_gemma import GemmaAttention as HFGemmaAttention
 from transformers.models.gemma.modeling_gemma import GemmaDecoderLayer as HFGemmaDecoderLayer
 from transformers.models.gemma.modeling_gemma import GemmaMLP as HFGemmaMLP
 from transformers.models.gemma.modeling_gemma import GemmaRMSNorm as HFGemmaRMSNorm
 from transformers.models.gemma.modeling_gemma import GemmaRotaryEmbedding as HFGemmaRotaryEmbedding
 from transformers.models.gemma.modeling_gemma import apply_rotary_pos_emb as hf_apply_rotary_pos_emb
+from transformers.models.gemma.modeling_gemma import repeat_kv as hf_repeat_kv
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -134,34 +137,63 @@ def check_rope():
     return bool(ok_freq and ok_cs and ok_qk and norm_kept)
 
 
-class StubAttention(nn.Module):
-    def __init__(self, hidden_size, hf_style):
-        super().__init__()
-        self.proj = nn.Linear(hidden_size, hidden_size, bias=False)
-        self.hf_style = hf_style
+def check_repeat_kv():
+    n_heads = SMALL["num_attention_heads"]
+    ok = True
+    # 1: Gemma 2B gibi MQA. 2: GQA (n_kv > 1, gruplama sırası burada belli olur). 4: n_rep = 1, hiçbir şey değişmemeli
+    for n_kv in (1, 2, 4):
+        n_rep = n_heads // n_kv
+        x = torch.randn(B, n_kv, T, SMALL["head_dim"])
+        ours, theirs = gemma.repeat_kv(x, n_rep), hf_repeat_kv(x, n_rep)
+        ok &= compare(f"repeat_kv n_kv={n_kv}, n_rep={n_rep}", ours, theirs, exact=True)
 
-    def forward(self, hidden_states, **kwargs):
-        out = self.proj(hidden_states)
-        return (out, None) if self.hf_style else out
+        # Q head'i h, KV head'i h // n_rep'i kullanmalı (gruplar komşu head'lerden oluşuyor)
+        grouped = all(torch.equal(ours[:, h], x[:, h // n_rep]) for h in range(n_heads))
+        print(f"[{'OK ' if grouped else 'HATA'}] repeat_kv n_kv={n_kv}: Q head h -> KV head h // n_rep")
+        ok &= grouped
+    return bool(ok)
+
+
+def check_attention():
+    hf_config = HFGemmaConfig(**SMALL, hidden_act="gelu_pytorch_tanh")
+    hf_config._attn_implementation = "eager"      # sdpa/flash kernel'leri değil, yukarıda yazılan matematiğin kendisi
+    hf = HFGemmaAttention(hf_config, layer_idx=0).eval()
+    ours = gemma.GemmaAttention(gemma.GemmaConfig(**SMALL), layer_idx=0).eval()
+    if not copy_weights("GemmaAttention", ours, hf):
+        return False
+
+    hf_rope = HFGemmaRotaryEmbedding(hf_config)
+    x = torch.randn(B, T, SMALL["hidden_size"])
+    position_ids = torch.arange(T).unsqueeze(0).expand(B, -1)
+    cos, sin = hf_rope(x, position_ids)
+
+    # Nedensel maske: token i sadece j <= i olanlara bakabilir. Toplanan biçim: izinli 0, yasak -inf
+    mask = torch.full((T, T), float("-inf")).triu(diagonal=1)[None, None].expand(B, 1, T, T)
+
+    with torch.no_grad():
+        ok_mask = compare("GemmaAttention (nedensel maske)",
+                          ours(x, (cos, sin), mask), hf(x, (cos, sin), mask)[0])
+        ok_nomask = compare("GemmaAttention (maskesiz)", ours(x, (cos, sin)), hf(x, (cos, sin), None)[0])
+
+        # Nedensel maske gerçekten işe yarıyor mu: gelecekteki token'ı değiştirmek geçmiş çıktıyı etkilememeli
+        x2 = x.clone()
+        x2[:, -1] += 10.0
+        out1, out2 = ours(x, (cos, sin), mask), ours(x2, (cos, sin), mask)
+        causal = torch.allclose(out1[:, :-1], out2[:, :-1], atol=ATOL) and not torch.allclose(out1[:, -1], out2[:, -1])
+        print(f"[{'OK ' if causal else 'HATA'}] GemmaAttention: son token değişince önceki çıktılar aynı kalıyor")
+    return bool(ok_mask and ok_nomask and causal)
+
+
+def hf_eager_config():
+    cfg = HFGemmaConfig(**SMALL, hidden_act="gelu_pytorch_tanh")
+    cfg._attn_implementation = "eager"      # sdpa/flash kernel'leri değil, bizim yazdığımız matematiğin kendisi
+    return cfg
 
 
 def check_decoder_layer():
-    hf_config = HFGemmaConfig(**SMALL, hidden_act="gelu_pytorch_tanh")
+    hf_config = hf_eager_config()
     hf = HFGemmaDecoderLayer(hf_config, layer_idx=0).eval()
     ours = gemma.GemmaDecoderLayer(gemma.GemmaConfig(**SMALL), layer_idx=0).eval()
-
-    # Stub'ı self_attn adına koyuyoruz. Bizim katmanda attention başka bir adla duruyorsa stub hiç
-    # çağrılmaz ve sebebi belirsiz bir sayısal fark çıkar. Önce adı kontrol et
-    if not hasattr(ours, "self_attn"):
-        others = [n for n, _ in ours.named_children() if n not in ("mlp", "input_layernorm", "post_attention_layernorm")]
-        print(f"[HATA] GemmaDecoderLayer: 'self_attn' adında bir alt modül yok (bulunan: {others}). "
-              f"HF anahtarları layers.N.self_attn.q_proj.weight şeklinde")
-        return False
-
-    # Gerçek attention'ı iki tarafta da stub ile değiştir (bizimki gerçek GemmaAttention olsa bile,
-    # çünkü burada test edilen şey katmanın iskeleti. Attention'ın kendi testi aşama 5'te eklenecek)
-    hf.self_attn = StubAttention(SMALL["hidden_size"], hf_style=True)
-    ours.self_attn = StubAttention(SMALL["hidden_size"], hf_style=False)
 
     # Norm ağırlıklarını rastgele yap. Sıfır kalırsa iki norm aynı davranır ve
     # input_layernorm ile post_attention_layernorm'u karıştıran bir kod da testi geçer
@@ -172,19 +204,12 @@ def check_decoder_layer():
         return False
 
     x = torch.randn(B, T, SMALL["hidden_size"]) * 40
+    position_ids = torch.arange(T).unsqueeze(0).expand(B, -1)
+    cos, sin = HFGemmaRotaryEmbedding(hf_config)(x, position_ids)
+    mask = gemma.make_causal_mask(T, x.dtype, x.device)
     with torch.no_grad():
-        return compare("GemmaDecoderLayer (stub attention)", ours(x), hf(x))
-
-
-def stub_all_layers(name, ours_model, hf_model):
-    """Her katmanın attention'ını iki tarafta da aynı (rastgele) stub ile değiştir."""
-    if not all(hasattr(layer, "self_attn") for layer in ours_model.layers):
-        print(f"[HATA] {name}: katmanlarda 'self_attn' alt modülü yok")
-        return False
-    for ours_layer, hf_layer in zip(ours_model.layers, hf_model.layers):
-        hf_layer.self_attn = StubAttention(SMALL["hidden_size"], hf_style=True)
-        ours_layer.self_attn = StubAttention(SMALL["hidden_size"], hf_style=False)
-    return True
+        return compare("GemmaDecoderLayer", ours(x, (cos, sin), mask),
+                       hf(x, attention_mask=mask, position_embeddings=(cos, sin)))
 
 
 def randomize_norms(module):
@@ -209,27 +234,23 @@ def scaled_embeds(ours_model):
 
 
 def check_model():
-    hf_config = HFGemmaConfig(**SMALL, hidden_act="gelu_pytorch_tanh")
+    hf_config = hf_eager_config()
     hf = HFGemmaForCausalLM(hf_config).model.eval()   # GemmaModel kısmı
     ours = gemma.GemmaModel(gemma.GemmaConfig(**SMALL)).eval()
-    if not stub_all_layers("GemmaModel", ours, hf):
-        return False
     randomize_norms(hf)
     if not copy_weights("GemmaModel", ours, hf):
         return False
 
     with torch.no_grad():
         raw, scaled = scaled_embeds(ours)
-        return compare("GemmaModel (stub attention)", ours(raw), hf(inputs_embeds=scaled).last_hidden_state)
+        return compare("GemmaModel", ours(raw), hf(inputs_embeds=scaled).last_hidden_state)
 
 
 def check_causal_lm():
-    hf_config = HFGemmaConfig(**SMALL, hidden_act="gelu_pytorch_tanh")
+    hf_config = hf_eager_config()
     hf = HFGemmaForCausalLM(hf_config).eval()
     ours = gemma.GemmaForCausalLM(gemma.GemmaConfig(**SMALL)).eval()
     ours.tie_weights()   # bizde tying'i PaliGemma çağırıyor, burada elle
-    if not stub_all_layers("GemmaForCausalLM", ours.model, hf.model):
-        return False
     randomize_norms(hf)
     if not copy_weights("GemmaForCausalLM", ours, hf):
         return False
@@ -241,7 +262,7 @@ def check_causal_lm():
 
     with torch.no_grad():
         raw, scaled = scaled_embeds(ours.model)
-        ok = compare("GemmaForCausalLM logit'ler (stub attention)", ours(raw), hf(inputs_embeds=scaled).logits)
+        ok = compare("GemmaForCausalLM logit'ler", ours(raw), hf(inputs_embeds=scaled).logits)
     return tied and ok
 
 
@@ -251,6 +272,8 @@ def main():
         ("GemmaRMSNorm", check_rmsnorm),
         ("GemmaMLP", check_mlp),
         ("GemmaRotaryEmbedding", check_rope),
+        ("repeat_kv", check_repeat_kv),
+        ("GemmaAttention", check_attention),
         ("GemmaDecoderLayer", check_decoder_layer),
         ("GemmaModel", check_model),
         ("GemmaForCausalLM", check_causal_lm),
