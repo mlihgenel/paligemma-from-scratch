@@ -16,8 +16,9 @@ export function ContrastMatrix() {
   const [hov, setHov] = useState<[number, number] | null>(null);
   const S = useMemo(() => { const r = rng(17); return Array.from({ length: N }, (_, i) => Array.from({ length: N }, (_, j) => +(i === j ? 2.2 + r.normal() * 0.5 : r.normal() * 0.9).toFixed(2))); }, []);
   const t = 1, b = -2;   // sigmoid: z_ij (t·s + b)
-  const cs = Math.max(34, Math.min(60, (W - 180) / N));
-  const x0 = 150, y0 = 40;
+  const narrow = W < 460;                      // telefon: etiket alanı ve yazı küçülüyor, sütun başlıkları üst üste binmesin
+  const x0 = narrow ? 92 : 150, y0 = 40;
+  const cs = Math.max(narrow ? 40 : 34, Math.min(60, (W - x0 - 30) / N));
   const cells: Cell[] = [];
   const row = (i: number) => S[i].map((v) => Math.exp(v));
   for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
@@ -39,22 +40,27 @@ export function ContrastMatrix() {
   }
   const labels = <>
     {IMG.map((m, i) => <div key={i} style={{ position: "absolute", left: 0, top: y0 + i * (cs + 3), width: x0 - 10, height: cs, textAlign: "right", lineHeight: `${cs}px`, fontSize: 13 }}>{m}</div>)}
-    {TXT.map((m, j) => <div key={j} style={{ position: "absolute", left: x0 + j * (cs + 3), top: 0, width: cs, height: y0 - 4, fontSize: 11.5, display: "flex", alignItems: "flex-end", justifyContent: "center", textAlign: "center", color: "var(--fg-muted)" }}>{m}</div>)}
+    {TXT.map((m, j) => <div key={j} style={{ position: "absolute", left: x0 + j * (cs + 3), top: 0, width: cs, height: y0 - 4, fontSize: narrow ? 9.5 : 11.5, display: "flex", alignItems: "flex-end", justifyContent: "center", textAlign: "center", color: "var(--fg-muted)" }}>{m}</div>)}
   </>;
   const loss = mode === "softmax"
     ? -S.reduce((a, r, i) => a + (r[i] - Math.log(r.reduce((s, v) => s + Math.exp(v), 0))), 0) / N
     : -S.reduce((a, r, i) => a + r.reduce((s, v, j) => s + Math.log(sigmoid((i === j ? 1 : -1) * (t * v + b))), 0), 0) / N;
+  // Matris en fazla ~560 px yer tutuyor (hücre 60 px'te kalıyor), geniş şeklin kalanını sağdaki sayılar dolduruyor
   return (
-    <div ref={ref}>
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end", marginBottom: 10 }}>
-        <Seg value={mode} onChange={setMode} options={[["softmax", "softmax (CLIP)"], ["sigmoid", "sigmoid (SigLIP)"]]} />
-        <span className="small muted">bir hücrenin üstüne gel: kaybı hangi hücrelere bağlı?</span>
+    <div className="matrix-fig">
+      <div ref={ref} className="matrix-main">
+        <div style={{ marginBottom: 10 }}>
+          <Seg value={mode} onChange={setMode} options={[["softmax", "softmax (CLIP)"], ["sigmoid", "sigmoid (SigLIP)"]]} />
+        </div>
+        <CellCanvas cells={cells} width={W} height={y0 + N * (cs + 3) + 6} max={3} labels={labels}
+          onHover={(id) => setHov(id ? (id.split("-").map(Number) as [number, number]) : null)} />
       </div>
-      <CellCanvas cells={cells} width={W} height={y0 + N * (cs + 3) + 6} max={3} labels={labels}
-        onHover={(id) => setHov(id ? (id.split("-").map(Number) as [number, number]) : null)} />
-      <div className="stats">
-        <Stat label="batch başına kayıp" value={loss.toFixed(3)} sub={mode === "softmax" ? "satır ve sütun softmax'larının ortalaması (burada satır)" : "N² bağımsız ikili sınıflandırma"} />
-        <Stat label="bir hücrenin bağımlı olduğu hücre" value={mode === "softmax" ? `${2 * N - 1}` : "1"} sub={mode === "softmax" ? "kendi satırı + sütunu" : "sadece kendisi"} />
+      <div className="matrix-side">
+        <p className="small muted" style={{ margin: 0 }}>Bir hücrenin üstüne gel: kaybı hangi hücrelere bağlı?</p>
+        <div className="stats col">
+          <Stat label="batch başına kayıp" value={loss.toFixed(3)} sub={mode === "softmax" ? "satır ve sütun softmax'larının ortalaması (burada satır)" : "N² bağımsız ikili sınıflandırma"} />
+          <Stat label="bir hücrenin bağımlı olduğu hücre" value={mode === "softmax" ? `${2 * N - 1}` : "1"} sub={mode === "softmax" ? "kendi satırı + sütunu" : "sadece kendisi"} />
+        </div>
       </div>
     </div>
   );
