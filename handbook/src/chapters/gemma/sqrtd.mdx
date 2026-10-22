@@ -1,6 +1,6 @@
 import { Callout, Fig, Predict, S, Impact } from "../../components/ui";
 import { CodeWalk } from "../../components/CodeWalk";
-import { BreakIt, ManimVideo } from "../../components/misc";
+import { BreakIt } from "../../components/misc";
 import { StreamCompare } from "./w/Stream";
 import { EmbedNorms, ScaleBalance, RoundTrip, Bits, NormalizerVariants } from "./w/SqrtD";
 import { Scrolly, Step } from "../../interact/Scrolly";
@@ -8,20 +8,23 @@ import { Link } from "react-router-dom";
 
 # √d ölçeği
 
-<p className="lead">İki dosyada birbirini tamamlayan iki satır var: <code>paligemma.py</code> görsel özellikleri √d'ye bölüyor, <code>gemma.py</code> bütün embedding'leri √d ile çarpıyor. Bu sayfa üç soruyu cevaplıyor: neden çarpıyoruz, görüntüyü neden önce bölüyoruz ve bf16 bu hesabı nasıl etkiliyor.</p>
+<p className="lead">Gemma'ya giren <b>metin</b> embedding'leri √d ile çarpılıyor. Görsel özellikler bu çarpımdan geçmiyor: projektörden çıktıkları gibi diziye yerleşiyorlar. Bu sayfa üç soruyu cevaplıyor: neden çarpıyoruz, görsel token'lar neden çarpılmıyor ve bf16 bu hesabı nasıl etkiliyor.</p>
 
 ## Kodda nerede?
 
 <CodeWalk file="gemma.py" symbol="GemmaModel.forward" notes={[
-  { match: "hidden_states = inputs_embeds", title: "Giriş", text: <>Gelen tensör <S s="B, T, D" />. Metin token'ları embedding tablosundan, görsel token'lar projektörden geliyor ve <code>paligemma.py</code>'de birleştirilmiş durumdalar.</> },
+  { match: "hidden_states = inputs_embeds", title: "Giriş", text: <>Gelen tensör <S s="B, T, D" />. Metin token'ları embedding tablosundan, görsel token'lar projektörden geliyor ve <code>paligemma.py</code>'de birleştirilmiş durumdalar. PaliGemma'da bu tensörün metin satırları <b>zaten ×√d</b> yapılmış olarak geliyor.</> },
+  { match: "scale_embeddings: bool = True", title: "Ölçekleme açık mı?", text: <>Varsayılan <code>True</code>: saf Gemma kullanımında (<code>check_gemma.py</code>) bütün girdi √d ile çarpılıyor. PaliGemma <code>False</code> veriyor, çünkü ölçeği kendi içinde, yalnızca metne uyguladı. Yoksa görsel token'lar da çarpılırdı.</> },
   { match: "normalizer = torch.tensor", title: "√d, girdinin dtype'ında", text: <>√2048 = 45.2548… Tensör <code>hidden_states.dtype</code> ile kuruluyor. Model bf16'da çalışırken bu sayı <b>45.25</b>'e yuvarlanıyor. Bilerek böyle: HF de aynısını yapıyor. Aşağıdaki "bf16" bölümüne bak.</> },
   { match: "hidden_states = hidden_states * normalizer", title: "Ölçekleme", text: <>Her eleman 45.25 ile çarpılıyor. Şekil aynı kalıyor: <S s="B, T, D" />. Bu satırdan sonra akış otoyola giriyor (<Link to="/gemma/akis">4.2</Link>).</> },
   { match: "for decoder_layer in self.layers", title: "Katmanlar", text: <>Ölçeklenmiş akış 18 katmandan geçiyor.</> },
 ]} />
 
 <CodeWalk file="paligemma.py" symbol="PaliGemmaForConditionalGeneration._merge_input_ids_with_image_features" notes={[
-  { match: "scaled_image_features = image_features /", title: "Görsel token'lar önce bölünüyor", text: <>Projektör çıktısı <S s="B, 256, 2048" ax="B,T,D" /> √2048'e bölünüyor. Birkaç satır sonra Gemma bütün diziyi √2048 ile çarpacak. Görsel token'lar için bu ikisi birbirini götürüyor: net etki ×1.</> },
-  { match: "masked_scatter(image_mask_expanded", title: "Diziye yerleşme", text: <>Bölünmüş özellikler <code>&lt;image&gt;</code> konumlarına sırayla yazılıyor. Animasyonu <Link to="/kopru#birlestirme">Bölüm 3</Link>'te.</> },
+  { match: "normalizer = torch.tensor", title: "√d, metnin dtype'ında", text: <>Aynı √2048, bu kez <code>inputs_embeds.dtype</code> ile: bf16 modelde 45.25. HF'nin ölçekli embedding tablosuyla aynı işlem.</> },
+  { match: "scaled_text_embeds = inputs_embeds * normalizer", title: "Yalnızca metin ×√d", text: <>Tablodan gelen <S s="B, T, 2048" ax="B,T,D" /> embedding'ler çarpılıyor. <code>&lt;image&gt;</code> konumlarının satırları da çarpılıyor ama birazdan üzerlerine yazılacak.</> },
+  { match: "final_embedding = torch.where(text_mask_expanded, scaled_text_embeds", title: "Ölçeklenmiş metin yerleşiyor", text: <>Metin konumlarına <b>ölçeklenmiş</b> embedding'ler kopyalanıyor.</> },
+  { match: "masked_scatter(image_mask_expanded", title: "Görsel özellikler ölçeksiz yerleşiyor", text: <>Projektör çıktısı <S s="B, 256, 2048" ax="B,T,D" /> hiçbir işlemden geçmeden <code>&lt;image&gt;</code> konumlarına sırayla yazılıyor. Animasyonu <Link to="/kopru#birlestirme">Bölüm 3</Link>'te.</> },
 ]} />
 
 ## √d dört adımda
@@ -36,7 +39,7 @@ Tartışmaya ölçümle başlayalım. Aşağı kaydırdıkça figür değişiyor
 **Ölçek dengesi.** Akışa önce embedding giriyor, sonra her katman bir güncelleme ekliyor. Kaydırıcıyla embedding'in ölçeğini değiştir. s küçükse embedding ilk katmanlarda boğuluyor (cos ↓). s büyükse katmanlar akışı değiştiremiyor. Kesikli çizgiler senin kodunla gerçekten ölçüldü.
 </Step>
 <Step>
-**Görsel token'ın gidiş-dönüşü.** Görsel özellik önce ÷√d (`paligemma.py`), sonra ×√d (`gemma.py`) görüyor, net etki ×1. Değer kaydırıcısıyla dene: float32'de fark ~1e-7. bf16'da ise bazı değerler aynen dönüyor, bazıları ~%0.5 sapıyor.
+**Eski yol: görsel token'ın gidiş-dönüşü.** Kodun ilk sürümü görsel özelliği önce ÷√d, sonra Gemma'nın ×√d'siyle çarpıyordu: matematikte net etki ×1. Değer kaydırıcısıyla dene: float32'de fark ~1e-7. bf16'da ise bazı değerler aynen dönüyor, bazıları ~%0.5 sapıyor. Yolu bu yüzden kısalttık (aşağıdaki bulgu).
 </Step>
 <Step>
 **Neden 45.25?** bf16, float32'nin üst 16 biti: üs (aralık) aynı, mantis (hassasiyet) 23 bitten 7 bite iniyor. √2048 = 45.2548… en yakın bf16 değerine, **45.25**'e yuvarlanıyor. Senin `normalizer`'ın `hidden_states.dtype` ile kurulduğu için model bf16'dayken 45.25 ile çarpıyor, tıpkı HF gibi.
@@ -72,15 +75,35 @@ Bu çarpımın kökü <i>Attention Is All You Need</i> (2017, §3.4): "embedding
 Bu iki rol farklı büyüklükler istiyor. Çıkışta tablonun küçük kalması lazım, yoksa logit'ler patlar: norm(h)'nin normu ≈ √2048·(1+w) ≈ 45+ ve satır normu ≈ 8 iken bile logit'ler onlarca birim. Girişte ise akışta katman güncellemeleriyle yarışacak kadar büyük olması lazım. ×√d bu iki gereksinimi birbirinden ayırıyor: tablo "çıkış ölçeğinde" kalıyor, girişte 45 kat büyütülüyor.
 </Callout>
 
-## Görsel token'lar: neden önce bölüyoruz?
+## Görsel token'lar: neden çarpılmıyor?
 
-SigLIP + projektör çıktısı zaten akışın beklediği ölçekte eğitildi. Google'ın orijinal (big_vision) implementasyonunda √d çarpımı sadece **metin** embedding'lerine uygulanıyor, görsel token'lar akışa olduğu gibi giriyor. Senin kodunda (ve Umar'ınkinde) √d çarpımı `GemmaModel.forward`'ın başında, yani **bütün** diziye uygulanıyor. Görsel token'ların etkilenmemesi için önce bölünüyorlar: <span className="mono">(x / √d) · √d = x</span>.
+SigLIP + projektör çıktısı zaten akışın beklediği ölçekte eğitildi: PaliGemma'da görüntü tarafı ve dil tarafı birlikte ayarlandı, projektör çıktısı Gemma'nın içinde olduğu gibi kullanılıyor. Google'ın orijinal (big_vision) implementasyonunda √d çarpımı sadece **metin** embedding'lerine uygulanıyor, görsel token'lar akışa olduğu gibi giriyor. Kurulu `transformers` 5.x'te de ölçek `GemmaTextScaledWordEmbedding` içinde, yani yalnızca tablodan gelen metne uygulanıyor.
 
+Senin kodun artık aynısını yapıyor:
 
+1. `_merge_input_ids_with_image_features` **metin** embedding'lerini √d ile çarpıyor (`scaled_text_embeds`), görsel özellikleri olduğu gibi `masked_scatter` ile yerleştiriyor.
+2. `PaliGemma.forward` dil modelini `scale_embeddings=False` ile çağırıyor, yani `GemmaModel` diziyi ikinci kez çarpmıyor.
+3. Saf Gemma kullanımında (`scale_embeddings=True`, varsayılan) bütün girdi çarpılıyor. `check_gemma.py` bu yolu test ediyor.
 
-<Impact from="paligemma.py: ÷√d  +  gemma.py: ×√d" to="HF 5.x: sadece metin ×√d (tablonun içinde)">
-Kurulu <code>transformers</code> 5.x'te ölçek <code>GemmaTextScaledWordEmbedding</code> içinde, yani sadece tablodan gelen <b>metin</b> embedding'lerine uygulanıyor. Görsel özellikler hiç bölünmeden, olduğu gibi yerleşiyor. Matematiksel olarak senin yolunla aynı. Ama bf16'da gidiş-dönüş tam olmadığı için <b>uçtan uca bf16 karşılaştırmasında görsel token'larda ~%0.5'lik farklar</b> çıkabilir. Bu bir hata değil, tolerans (<code>atol≈1e-2</code>) bunu kapsamalı. float32'de birebir eşleşmeli.
+<Impact from="eski: paligemma.py ÷√d (görsel) + gemma.py ×√d (hepsi)" to="şimdi: paligemma.py sadece metin ×√d, görsel ölçeksiz (HF 5.x gibi)">
+Matematikte ikisi aynı. Ama bf16'da eski yol görsel token'larda iki fazladan yuvarlama yapıyordu (aşağıdaki bulgu). Şimdiki yol HF ile aynı işlemleri aynı sırayla yapıyor.
 </Impact>
+
+<Callout kind="bulgu" title="Gerçek ağırlıklardan: eski yol neden bırakıldı?">
+İlk sürümde görsel özellikler önce ÷√d, sonra Gemma'nın ×√d'siyle çarpılıyordu. Matematikte ×1, ama bf16'da iki adım da yuvarlıyor ve √2048 = 45.2548… bf16'da 45.25. <code>google/paligemma-3b-pt-224</code> gerçek ağırlıklarıyla, bf16'da, HF'ye karşı logit karşılaştırması:
+<ul>
+<li>ortalama |fark| <b>0.195</b>, en büyük 3.9. 260 konumun %91.5'inde argmax aynı. Uyuşmayan 22 konumun <b>hepsi görüntü konumu</b>, orada HF'nin 1. ve 2. adayı arasındaki fark ortalama 0.13: neredeyse beraberlik. Greedy üretim yine HF ile token token aynıydı.</li>
+<li>Katman katman göreli hata: SigLIP'in 27 katmanı, SigLIP çıkışı ve projektör <b>tam 0</b>. Gemma katman 0'da <b>2e-3</b>'e sıçrıyor, sonra yumuşakça büyüyor: 9. katmanda 5e-3, 17. katmanda 3.6e-2.</li>
+<li>Aynı ağırlıklar CPU'da float32'de: SigLIP fark 0, Gemma katmanları ~1e-7. Yani kod doğruydu, fark yalnızca gidiş-dönüşün bf16 yuvarlamasıydı. Sıçrama tam Gemma'ya girişte, görsel özellikler birleştirilirken oluşuyordu.</li>
+</ul>
+Birleştirmeyi HF gibi (metin ×√d, görsel ölçeksiz) yapınca önce küçük bir modelde (hidden_size 48, bf16) logit farkı 0.125'ten <b>tam 0'a</b> indi (<code>check_paligemma.py</code>, <code>check_bf16_exact</code>). Sonra gerçek modelde, aynı girdiyle (c00.jpg, <code>caption en</code>, T = 260), Colab T4'te, bf16'da yeniden ölçtük:
+<ul>
+<li>logit farkı <b>0.000</b> (ortalama 0.00000, logit ölçeği ≈ 5.5), <code>allclose(atol=1e-2)</code> <b>True</b>. Önceki ölçüm: en büyük 3.875, ortalama 0.195.</li>
+<li>argmax <b>%100</b> konumda aynı (önce %91.5), son konumda top-5 aynı (önce bir aday farklıydı).</li>
+<li>Greedy üretim <code>'a sign near the entrance'</code>, HF ile token token aynı (6 token, eos'ta duruyor).</li>
+</ul>
+Yani gerçek modelde de logit'ler HF ile <b>birebir</b>. Teşhis doğrulandı: aradaki fark baştan sona ÷√d ve ×√d'nin bf16 yuvarlamalarıydı.
+</Callout>
 
 ## bf16: neden 45.25?
 
@@ -95,5 +118,3 @@ Peki `normalizer`'ı farklı kursan ne olur? Hepsi bf16 bir tensörle çarpılı
 <Predict q="Model float32'de çalışırken normalizer'ın dtype'ı float32 olur. O zaman √2048 hangi değerle çarpılıyor?">
 <b>45.254833…</b> (float32'nin 24 bitlik hassasiyetiyle). 45.25'e yuvarlama sadece bf16 (ve float16) modelde oluyor. Kod tek ama sayı dtype'a göre değişiyor. Bu yüzden normalizer'ı <code>hidden_states.dtype</code> ile kurmak HF ile birebir eşleşmenin şartı.
 </Predict>
-
-<ManimVideo scene="ScaleRoundTrip" caption="Metin token'ı ve görsel token'ın akışa giriş yolu: biri ×√d alıyor, öteki ÷√d ve ×√d ile değişmeden kalıyor." />

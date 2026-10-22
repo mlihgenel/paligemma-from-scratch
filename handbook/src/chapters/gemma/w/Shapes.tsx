@@ -5,8 +5,8 @@ import { S } from "../../../components/ui";
 const STEPS = [
   { code: "input_ids", shape: [1, 260], ax: "B,T", dtype: "int64", last: 1, note: "token id'leri: 256 × <image> + <bos> caption ▁tr \\n" },
   { code: "embed_tokens(input_ids)", shape: [1, 260, 2048], ax: "B,T,D", dtype: "float32", last: 2048, note: "her id tablodan bir satır alıyor" },
-  { code: "masked_scatter(image_mask, image_features)", shape: [1, 260, 2048], ax: "B,T,D", dtype: "float32", last: 2048, note: "256 konuma görsel özellikler yazılıyor (÷√d ile)" },
-  { code: "hidden_states * normalizer", shape: [1, 260, 2048], ax: "B,T,D", dtype: "float32", last: 2048, note: "×45.25 — şekil aynı, büyüklük değişiyor" },
+  { code: "masked_scatter(image_mask, image_features)", shape: [1, 260, 2048], ax: "B,T,D", dtype: "float32", last: 2048, note: "256 konuma görsel özellikler ölçeksiz yazılıyor, metin satırları ×45.25 ile ölçeklenmiş" },
+  { code: "language_model(…, scale_embeddings=False)", shape: [1, 260, 2048], ax: "B,T,D", dtype: "float32", last: 2048, note: "GemmaModel girişi: dizi zaten ölçekli, ikinci kez ×45.25 yok. Şekil aynı" },
   { code: "for decoder_layer in self.layers", shape: [1, 260, 2048], ax: "B,T,D", dtype: "float32", last: 2048, note: "18 katman, her biri aynı şekli koruyor" },
   { code: "self.norm(hidden_states)", shape: [1, 260, 2048], ax: "B,T,D", dtype: "float32", last: 2048, note: "akış tek bir kez normalize ediliyor" },
   { code: "self.lm_head(hidden_states)", shape: [1, 260, 257216], ax: "B,T,V", dtype: "float32", last: 257216, note: "her konum için sözlükteki her token'a bir skor" },

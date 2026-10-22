@@ -162,7 +162,7 @@ export function JourneyScene({ stage: s, image, prompt, height = 480 }: { stage:
     const piece = isImg ? "" : prompt.text_pieces[i - NP];
     items.push({
       id: "t" + i, pos: [xOf(i), colH / 2, on ? rowZ : rowZ + (isImg ? 0 : 1.5)],
-      size: [TW * 0.8, colH, TW * 0.8], color: isImg ? imgColor : Vc, hidden: !on, dim: s === idx("div") && isImg,
+      size: [TW * 0.8, colH, TW * 0.8], color: isImg ? imgColor : Vc, hidden: !on,
       tip: () => isImg
         ? <div style={{ display: "flex", gap: 10, alignItems: "center" }}><PatchThumb img={image} r={Math.floor(i / N)} c={i % N} size={56} /><div><b>token {i}</b> · görsel<div className="muted">yama ({Math.floor(i / N)}, {i % N})</div><div className="mono">{st.shape(DIMS.real, T).slice(-1)[0]} sayı</div></div></div>
         : <><b>token {i}</b> · metin: <span className="mono">{SHOW(piece)}</span><div className="muted">id {prompt.text_ids[i - NP]}{piece === "<bos>" ? " · dizinin başı" : piece === "\n" ? " · prefix bitti işareti" : ""}</div></>,
@@ -184,17 +184,17 @@ export function JourneyScene({ stage: s, image, prompt, height = 480 }: { stage:
   const front: View = { pos: [x0 - 1.0, colH + 1.25, rowZ + 2.3], target: [x0 + 1.3, colH * 0.3, rowZ] };
   const view: View = !tokensOn
     ? { pos: [1.2, 1.9, 6.4], target: [0, 1.7, 0] }
-    : (s === idx("merge") || s === idx("scale") || s === idx("head"))
+    : (s === idx("merge") || s === idx("head"))
       ? { pos: [xEnd + 1.0, colH + 1.25, rowZ + 2.3], target: [xEnd - 1.3, colH * 0.3, rowZ] }
       : front;
-  const atEnd = s === idx("merge") || s === idx("scale") || s === idx("head");
+  const atEnd = s === idx("merge") || s === idx("head");
   return (
     <Stage3D view={view} height={height} minDist={1.5} maxDist={60}>
       <Patches s={s} image={image} place={place} />
       <Cubes items={items} tween={{ duration: 0.8, stagger: 0.0025 }} />
       {near(-3.2) && block(-3.2, 1.8, Tc, s === idx("enc"), "SigLIP encoder × 27")}
-      {near(-5.6) && block(-5.6, 2.6, Ic, s === idx("proj") || s === idx("div"), "projektör")}
-      {near(-7.6) && block(-7.6, 2.6, Vc, s === idx("merge") || s === idx("scale"), "birleştirme")}
+      {near(-5.6) && block(-5.6, 2.6, Ic, s === idx("proj"), "projektör")}
+      {near(-7.6) && block(-7.6, 2.6, Vc, s === idx("merge"), "birleştirme")}
       {near(-10.6) && block(-10.6, 2.6, cssColor("--ax-D"), s === idx("dec"), "Gemma decoder × 18")}
       {near(-13) && block(-13, 2.6, cssColor("--ax-hd"), s === idx("norm"), "son RMSNorm")}
       {near(-15) && block(-15, 3.8, Vc, s === idx("head"), "lm_head")}

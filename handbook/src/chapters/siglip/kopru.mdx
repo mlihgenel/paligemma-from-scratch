@@ -48,20 +48,20 @@ Gemma'nın gördüğü dizinin her konumu iki kaynaktan birinden geliyor: metin 
 
 <Scrolly label="_merge_input_ids_with_image_features" figure={(s) => <MergeScatter step={s} />}>
 <Step>**`input_ids`**: processor'dan gelen 10 id. Görsel konumlarda `<image>` = 257152 yer tutucusu var. Gösterim için sona 2 `<pad>` koyduk (senin modelin şimdilik padding'i reddediyor).</Step>
-<Step>**`inputs_embeds`**: önce **bütün** id'ler embedding tablosundan geçiyor, `<image>` da dahil. O sütunların değerleri birazdan atılacak. Gerçek checkpoint'te `<image>` satırının normu ≈ 7.3, ama hiç kullanılmıyor.</Step>
+<Step>**`inputs_embeds`**: önce **bütün** id'ler embedding tablosundan geçiyor, `<image>` da dahil. O sütunların değerleri birazdan atılacak. Gerçek checkpoint'te `<image>` satırının normu ≈ 7.3, ama hiç kullanılmıyor. Metin satırları bu noktada √d ile çarpılıyor (<Link to="/gemma/sqrt-d">4.3</Link>).</Step>
 <Step>**Üç maske**, her biri <S s="B, T" />: metin, görüntü, pad. Birbirlerini dışlıyorlar ve birlikte bütün diziyi kaplıyorlar.</Step>
 <Step>**`unsqueeze(-1).expand`**: <S s="B, T" /> → <S s="B, T, 1" /> → <S s="B, T, D" />. Her maske hücresi D alt hücreye bölündü. `expand` bellek kopyalamıyor, aynı değeri D boyunca görünüm olarak tekrarlıyor.</Step>
-<Step>**`torch.where` (metin)**: sıfırlardan başlayan `final_embedding`'e metin sütunları **aynı konumdan** kopyalanıyor. `where` eleman eleman seçtiği için iki kaynağın şekli aynı olmalı. Sağda bekleyen mavi blok görsel özellikler: <S s="B, 4, D" />.</Step>
+<Step>**`torch.where` (metin)**: sıfırlardan başlayan `final_embedding`'e (ölçeklenmiş) metin sütunları **aynı konumdan** kopyalanıyor. `where` eleman eleman seçtiği için iki kaynağın şekli aynı olmalı. Sağda bekleyen mavi blok görsel özellikler: <S s="B, 4, D" />.</Step>
 <Step>**`masked_scatter` (görüntü)**: görsel özellikler <S s="B, 4, D" />, hedef <S s="B, 10, D" />. Şekiller farklı, `where` kullanılamaz. `masked_scatter` kaynağı **düzleştirip sırayla** True konumlarına döküyor: v0 ilk `<image>`'e, v1 ikinciye… Sütunların tek tek yerine aktığına dikkat et.</Step>
 <Step>**`torch.where` (pad → 0)**: pad konumları zaten sıfırdı, bu satır güvence. Sonuç <S s="B, T, D" /> Gemma'ya gidiyor.</Step>
 </Scrolly>
 
 <CodeWalk file="paligemma.py" symbol="PaliGemmaForConditionalGeneration._merge_input_ids_with_image_features" notes={[
-  { match: "scaled_image_features = image_features /", title: "÷√d", text: <>Bkz. <Link to="/gemma/sqrt-d">4.3</Link>. Gemma'nın ×√d'sini görsel token'lar için nötrlüyor.</> },
+  { match: "scaled_text_embeds = inputs_embeds * normalizer", title: "metin ×√d", text: <>Yalnızca tablodan gelen metin embedding'leri √d ile çarpılıyor, görsel özellikler ölçeksiz kalıyor. Bkz. <Link to="/gemma/sqrt-d">4.3</Link>.</> },
   { match: "final_embedding = torch.zeros(", title: "boş tuval", text: <><S s="B, T, D" /> sıfır tensör, modelin dtype ve device'ında. Sonra üç kaynak üstüne yazılacak.</> },
   { match: "text_mask = (input_ids != self.config.image_token_index)", title: "metin maskesi", text: <>&lt;image&gt; değil <b>ve</b> pad değil. <code>&amp;</code> eleman eleman mantıksal VE. Python'un <code>and</code>'i tensörlerde çalışmaz.</> },
   { match: "text_mask_expanded = text_mask.unsqueeze(-1).expand(-1, -1, embed_dim)", title: "D'ye yay", text: <><code>-1</code> "bu ekseni olduğu gibi bırak" demek. Sonuç bir görünüm (view), kopya değil.</> },
-  { match: "final_embedding = torch.where(text_mask_expanded, inputs_embeds, final_embedding)", title: "where: aynı konumdan seç", text: <>Koşul True ise inputs_embeds'ten, değilse final_embedding'den. Üç tensör de <S s="B, T, D" />.</> },
+  { match: "final_embedding = torch.where(text_mask_expanded, scaled_text_embeds, final_embedding)", title: "where: aynı konumdan seç", text: <>Koşul True ise ölçeklenmiş metin embedding'inden, değilse final_embedding'den. Üç tensör de <S s="B, T, D" />.</> },
   { match: "final_embedding = final_embedding.masked_scatter(image_mask_expanded", title: "masked_scatter: sırayla dök", text: <>Kaynak <S s="B, 256, D" />, hedef <S s="B, T, D" />. Kaynak düzleştirilip True konumlarına <b>satır öncelikli sırayla</b> yazılıyor. Bu yüzden 256 &lt;image&gt; token'ının yan yana ve doğru sırada olması gerekiyor, processor bunu garanti ediyor.</> },
   { match: "final_embedding = torch.where(pad_mask_expanded", title: "pad'ler sıfır", text: <>Zaten sıfırdı, ama kod niyeti açıkça söylüyor.</> },
 ]} />
@@ -80,7 +80,7 @@ Gemma'nın gördüğü dizinin her konumu iki kaynaktan birinden geliyor: metin 
   { match: "inputs_embeds = self._merge_input_ids_with_image_features(", title: "4. birleştir", text: <>Yukarıdaki animasyon. <S s="B, T, 2048" ax="B,T,D" />.</> },
   { match: "position_ids = torch.arange(1, T + 1", title: "5. konumlar", text: <>RoPE için <code>1, 2, …, T</code>. HF PaliGemma konumları 1'den başlatıyor. Sonuç 0'dan başlasa da aynı olurdu, çünkü RoPE'ta skor yalnızca konum farkına bağlı (<Link to="/gemma/rope">4.9</Link>), ama HF ile birebir kalmak için aynısı yapılıyor.</> },
   { match: "mask = make_prefix_lm_mask(T, prefix_len", title: "6. prefix-LM maskesi", text: <><S s="1, 1, T, T" />. Prefix (ilk <code>prefix_len</code> token) iki yönlü, geri kalan nedensel. <code>prefix_len</code> verilmezse bütün girdi prefix sayılıyor. Aşağıdaki 5. bölümün konusu.</> },
-  { match: "logits = self.language_model(inputs_embeds", title: "7. Gemma", text: <><S s="B, T, 2048" ax="B,T,D" /> → <S s="B, T, 257216" ax="B,T,V" />, float32. Maske ve konumlar burada katmanlara iniyor. Bölüm 4'ün konusu.</> },
+  { match: "logits = self.language_model(inputs_embeds", title: "7. Gemma", text: <><S s="B, T, 2048" ax="B,T,D" /> → <S s="B, T, 257216" ax="B,T,V" />, float32. Maske ve konumlar burada katmanlara iniyor. <code>scale_embeddings=False</code>: metin birleştirme sırasında zaten ×√d yapıldı, <code>GemmaModel</code> tekrar çarpmıyor. Bölüm 4'ün konusu.</> },
 ]} />
 
 <Fig caption={<><b>Gerçek boyutlu forward.</b> Şekiller senin modelinin meta cihazındaki gerçek çalışmasından ("caption tr", T = 260).</>}>
@@ -91,8 +91,8 @@ Gemma'nın gördüğü dizinin her konumu iki kaynaktan birinden geliyor: metin 
   { op: "27 × SiglipEncoderLayer + post_layernorm", shape: "1, 256, 1152", ax: "B,T,D" },
   { op: "multi_modal_projector", shape: "1, 256, 2048", ax: "B,T,D" },
   { op: "embed_tokens(input_ids)", code: "input_ids [1, 260]", shape: "1, 260, 2048", ax: "B,T,D", note: "metin tarafı, paralel" },
-  { op: "÷√d + where + masked_scatter", shape: "1, 260, 2048", ax: "B,T,D" },
-  { op: "×√d, 18 × GemmaDecoderLayer, norm", shape: "1, 260, 2048", ax: "B,T,D" },
+  { op: "metin ×√d + where + masked_scatter", shape: "1, 260, 2048", ax: "B,T,D" },
+  { op: "18 × GemmaDecoderLayer, norm", shape: "1, 260, 2048", ax: "B,T,D", note: "scale_embeddings=False: ikinci ×√d yok" },
   { op: "lm_head + .float()", shape: "1, 260, 257216", ax: "B,T,V" },
 ]} />
 </Fig>
@@ -129,7 +129,7 @@ PaliGemma tespit (detection) sonucunu da metin olarak yazıyor. Sözlükte 1024 
 PaliGemma makalesi (§5.5, Connector design) linear projeksiyon ile MLP bağlayıcıyı karşılaştırıyor ve aralarında anlamlı bir fark bulmuyor. Bu yüzden daha basit olanı seçiyor. Sebep: SigLIP'in temsili zaten dille hizalı (<Link to="/buyuk-resim">2.1</Link>) ve Gemma güçlü. Ağır işi iki taraf yapıyor, köprünün çoğunlukla boyutu eşlemesi yetiyor. Ayrıca PaliGemma eğitimde hiçbir parçayı dondurmuyor: SigLIP de Gemma da birlikte ayarlanıyor, yani esneklik zaten iki taraftan geliyor.
 </ConceptQ>
 <ConceptQ n={2} q="Görsel token'lar embedding tablosundan gelmiyor. <image> token'ının embedding'i nerede ve nasıl değiştiriliyor?">
-<code>&lt;image&gt;</code> (id 257152) sözlükte gerçek bir token ve tabloda bir satırı var. Önce bütün <code>input_ids</code> tablodan geçiyor, &lt;image&gt;'ın satırı da dahil. Sonra <code>_merge_input_ids_with_image_features</code>'da <code>masked_scatter</code> o konumların üzerine projektör çıktısını (÷√d ile) sırayla yazıyor. &lt;image&gt;'ın tablodaki satırı hiç kullanılmamış oluyor (yukarıdaki birleştirme animasyonu).
+<code>&lt;image&gt;</code> (id 257152) sözlükte gerçek bir token ve tabloda bir satırı var. Önce bütün <code>input_ids</code> tablodan geçiyor, &lt;image&gt;'ın satırı da dahil. Sonra <code>_merge_input_ids_with_image_features</code>'da <code>masked_scatter</code> o konumların üzerine projektör çıktısını (ölçeksiz) sırayla yazıyor. &lt;image&gt;'ın tablodaki satırı hiç kullanılmamış oluyor (yukarıdaki birleştirme animasyonu).
 </ConceptQ>
 <ConceptQ n={3} q="Prompt'un sonuna \n eklenmesinin rolü ne?">
 PaliGemma bir prefix-LM: prefix (görüntü + prompt) tam attention, suffix (cevap) causal. <code>\n</code> eğitimde prefix'in bittiği yeri işaretliyordu. Model <code>\n</code>'den sonraki token'ın cevabın ilk token'ı olduğunu öğrendi. Olmazsa model prompt'u devam ettirmeye çalışabilir. Bu ayraç prefix maskesinin sınırını da belirliyor.

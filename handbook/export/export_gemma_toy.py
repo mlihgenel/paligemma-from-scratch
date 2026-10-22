@@ -170,7 +170,8 @@ def main():
         doc["sqrt_d"]["named_norms"] = [
             {**m, "norm": float(np.linalg.norm(r))} for m, r in zip(slices["embed_named"], named)]
 
-        # Görsel token yolu: ÷√d (paligemma.py) sonra ×√d (gemma.py), float32 ve bf16'da
+        # ESKİ görsel token yolu (artık kodda yok): ÷√d (paligemma.py) sonra ×√d (gemma.py), float32 ve bf16'da.
+        # Şimdiki kod görsel özellikleri hiç ölçeklemiyor, bu ölçüm yolu neden kısalttığımızı gösteriyor
         torch.manual_seed(2)
         img = torch.randn(1, 4, 2048) * 3
         rt = {}
@@ -180,6 +181,7 @@ def main():
             rt[str(dt).replace("torch.", "")] = {
                 "maxdiff": (back.float() - x.float()).abs().max().item(),
                 "rel": ((back.float() - x.float()).abs() / x.float().abs().clamp_min(1e-6)).max().item(),
+                "n_diff": int((back.float() != x.float()).sum()), "n": x.numel(),
             }
         doc["sqrt_d"]["roundtrip"] = rt
 

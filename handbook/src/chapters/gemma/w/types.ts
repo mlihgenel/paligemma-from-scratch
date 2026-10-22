@@ -17,7 +17,7 @@ export interface GemmaToy {
   sqrt_d: {
     d: number; sqrt_exact: number; sqrt_bf16: number; elem_std_raw: number; elem_std_scaled: number; row_norm_raw: number[];
     named_norms: { text: string; id: number; piece: string; norm: number }[];
-    roundtrip: Record<string, { maxdiff: number; rel: number }>;
+    roundtrip: Record<string, { maxdiff: number; rel: number; n_diff: number; n: number }>;
     normalizer_variants: Record<string, { dtype: string; n_diff: number; n: number; maxdiff: number }>;
   };
   rms_order: { n: number; n_diff: number; maxdiff: number };

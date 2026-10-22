@@ -39,7 +39,7 @@ export const PAGES: Page[] = [
 
   { path: "/gemma", num: "4.1", title: "Gemma haritası", blurb: "Dil modelinin parçaları ve şekilleri, tek bakışta.", part: "lang", arch: ["gemma", "output"], Component: mdx(() => import("./chapters/gemma/harita.mdx")) },
   { path: "/gemma/akis", num: "4.2", title: "Residual akışı: otoyol", blurb: "Katmanlar aynı akışa okuyup yazıyor.", part: "lang", arch: ["gemma"], Component: mdx(() => import("./chapters/gemma/akis.mdx")) },
-  { path: "/gemma/sqrt-d", num: "4.3", title: "√d ölçeği", blurb: "Embedding neden 45.25 ile çarpılıyor, görsel token'lar neden bölünüyor?", part: "lang", arch: ["proj", "gemma"], Component: mdx(() => import("./chapters/gemma/sqrtd.mdx")) },
+  { path: "/gemma/sqrt-d", num: "4.3", title: "√d ölçeği", blurb: "Embedding neden 45.25 ile çarpılıyor, görsel token'lar neden çarpılmıyor?", part: "lang", arch: ["proj", "gemma"], Component: mdx(() => import("./chapters/gemma/sqrtd.mdx")) },
   { path: "/gemma/rmsnorm", num: "4.4", title: "RMSNorm", blurb: "Büyüklüğü at, yönü koru: (1 + w), keepdim, float32.", part: "lang", arch: ["gemma"], Component: mdx(() => import("./chapters/gemma/rmsnorm.mdx")) },
   { path: "/gemma/geglu", num: "4.5", title: "GeGLU MLP", blurb: "Kapılı MLP: gate, up, down.", part: "lang", arch: ["gemma"], Component: mdx(() => import("./chapters/gemma/geglu.mdx")) },
   { path: "/gemma/katman", num: "4.6", title: "Decoder katmanı", blurb: "Norm → attention → ⊕, norm → MLP → ⊕.", part: "lang", arch: ["gemma"], Component: mdx(() => import("./chapters/gemma/katman.mdx")) },

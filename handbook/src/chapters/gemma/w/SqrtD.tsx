@@ -1,4 +1,4 @@
-// 5.2 √d ölçeği: gerçek embedding normları, ölçek dengesi, gidiş-dönüş, bf16 bitleri
+// 4.3 √d ölçeği: gerçek embedding normları, ölçek dengesi, eski yolun gidiş-dönüşü, bf16 bitleri
 import { useMemo, useState } from "react";
 import { useData } from "../../../lib/data";
 import { bits, toBf16 } from "../../../lib/bf16";
@@ -94,8 +94,9 @@ export function ScaleBalance() {
 }
 
 export function RoundTrip() {
+  const { data } = useData<GemmaToy>("gemma_toy");
   const [v, setV] = useState(3.7);
-  const a = v / SQRT;                         // paligemma.py: image_features / sqrt(d)
+  const a = v / SQRT;                         // ESKİ paligemma.py: image_features / sqrt(d) (artık kodda yok)
   const f32 = Math.fround(Math.fround(a) * Math.fround(SQRT));
   const ab = toBf16(a);                       // bf16 modelde bölmenin sonucu bf16'ya yuvarlanır
   const nb = toBf16(SQRT);                    // senin normalizer'ın bf16'da 45.25
@@ -104,8 +105,13 @@ export function RoundTrip() {
   const row = (label: string, val: number, note?: string, tone?: string) => (
     <tr><td className="muted">{label}</td><td className="mono" style={{ color: tone }}>{val.toPrecision(8)}</td><td className="small muted">{note}</td></tr>
   );
+  const rt = data?.sqrt_d.roundtrip.bfloat16;
   return (
     <div>
+      <p className="small muted" style={{ margin: "0 0 12px" }}>
+        <b>Eski yol.</b> Kodun ilk sürümü görsel özellikleri önce √2048'e bölüyor, sonra Gemma'nın ×√2048'iyle çarpıyordu. Şimdiki kod görselleri
+        hiç ölçeklemiyor. Bu figür yolu neden kısalttığımızı gösteriyor.
+      </p>
       <div className="row" style={{ alignItems: "center", gap: 12, marginBottom: 12 }}>
         <span className="small">bir görsel özellik değeri</span>
         <input type="range" min={-8} max={8} step={0.01} value={v} onChange={(e) => setV(+e.target.value)} style={{ flex: 1 }} />
@@ -131,6 +137,12 @@ export function RoundTrip() {
           </tbody></table>
         </div>
       </div>
+      {rt && (
+        <div className="row" style={{ marginTop: 14 }}>
+          <Stat label="bf16'da gidiş-dönüşte değişen değer" value={`%${((100 * rt.n_diff) / rt.n).toFixed(1)}`}
+            sub={`${rt.n_diff} / ${rt.n} rastgele değer · en büyük göreli sapma %${(rt.rel * 100).toFixed(2)}`} />
+        </div>
+      )}
     </div>
   );
 }

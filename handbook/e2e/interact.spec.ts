@@ -227,3 +227,31 @@ test("4.11 attention: ölçeksiz softmax head_dim 256'da tek token'a sıkışıy
   expect(raw).toBeGreaterThan(scaled);
   expect(raw).toBeGreaterThan(80);
 });
+
+test("4.3 √d: eski yol adımı etiketli ve bf16 gidiş-dönüşte değişen değer oranını gösteriyor", async ({ page }) => {
+  await page.goto("http://localhost:5173/#/gemma/sqrt-d", { waitUntil: "networkidle" });
+  const sc = page.locator(".scrolly").first();
+  const steps = sc.locator(".scrolly-step");
+  await steps.nth(2).evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.4));
+  await page.waitForTimeout(800);
+  await expect(steps.nth(2)).toHaveClass(/on/);
+  const fig = sc.locator(".scrolly-fig");
+  await expect(fig).toContainText("Eski yol");
+  const val = fig.locator(".stat").filter({ hasText: "gidiş-dönüşte değişen değer" }).locator(".val");
+  await expect(val).toHaveText(/^%\d/);
+  // float32 satırında fark ~0, bf16 satırı kaydırıcıyla değişiyor
+  await fig.locator("input[type=range]").fill("5");
+  await expect(fig.getByText("× 45.25 → bf16")).toBeVisible();
+});
+
+test("4.3 √d: sayfada artık görsel token'ların ÷√d'si anlatılmıyor, yalnızca metin ×√d", async ({ page }) => {
+  await page.goto("http://localhost:5173/#/gemma/sqrt-d", { waitUntil: "networkidle" });
+  const body = page.locator("main, article, body").first();
+  await expect(body).toContainText("Görsel token'lar: neden çarpılmıyor?");
+  await expect(body).toContainText("scale_embeddings=False");
+  await expect(body).not.toContainText("neden önce bölüyoruz");
+  // Düzeltmeden sonraki gerçek model ölçümü sayfada yazıyor
+  await expect(body).toContainText("0.195");
+  await expect(body).toContainText("%100");
+  await expect(body).not.toContainText("Colab'da yeniden koşu bekliyor");
+});

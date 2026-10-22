@@ -35,8 +35,8 @@ Gemma tarafında tek bir forward'da tensörün başına gelen her şey. Dikdört
 <Scrolly label="Gemma forward, şekiller" figure={(s) => <ShapeJourney step={s} />}>
 <Step>**`input_ids`** <S s="1, 260" ax="B,T" />. 256 tane `<image>` yer tutucusu (mavi) ve 4 metin token'ı (yeşil). Henüz sadece tam sayılar var.</Step>
 <Step>**`embed_tokens`**: her id tablodan bir satır seçiyor ve son eksen 2048 oluyor. Bu bir hesap değil, indeksleme. `<image>` konumları da tablodan geçiyor ama birazdan üzerlerine yazılacak.</Step>
-<Step>**Birleştirme** (`paligemma.py`): 256 görsel konuma projektörden gelen özellikler yazılıyor (mor). Şekil değişmiyor.</Step>
-<Step>**× √d**: bütün dizi 45.25 ile çarpılıyor. Şekil aynı, büyüklük değişiyor (<Link to="/gemma/sqrt-d">4.3</Link>).</Step>
+<Step>**Birleştirme** (`paligemma.py`): metin embedding'leri √d = 45.25 ile çarpılıyor, 256 görsel konuma projektörden gelen özellikler **ölçeksiz** yazılıyor (mor). Şekil değişmiyor (<Link to="/gemma/sqrt-d">4.3</Link>).</Step>
+<Step>**`GemmaModel` girişi**: dizi zaten ölçekli geliyor (`scale_embeddings=False`), ikinci kez çarpılmıyor. Saf Gemma kullanımında bu çarpım `GemmaModel.forward`'ın ilk işi.</Step>
 <Step>**18 decoder katmanı**: her katman <S s="B, T, D" /> alıp <S s="B, T, D" /> veriyor. Katmanlar aynı akışa okuyup yazıyor (<Link to="/gemma/akis">4.2</Link>).</Step>
 <Step>**Son norm**: akış tek bir kez normalize ediliyor (<Link to="/gemma/rmsnorm">4.4</Link>).</Step>
 <Step>**lm_head**: son eksen 2048'den **257216**'ya genişliyor, her konum için sözlükteki her token'a bir skor. float32'de 260 × 257216 × 4 bayt ≈ 255 MB (<Link to="/gemma/tying">4.8</Link>).</Step>
@@ -51,7 +51,7 @@ Gemma tarafında tek bir forward'da tensörün başına gelen her şey. Dikdört
 | | Konu | Kodda |
 |---|---|---|
 | <Link to="/gemma/akis">4.2</Link> | Residual akışı ("otoyol"), pre-norm | `GemmaDecoderLayer.forward` |
-| <Link to="/gemma/sqrt-d">4.3</Link> | √d ölçeği, görsel token'ların gidiş-dönüşü, bf16 | `GemmaModel.forward`, `_merge_input_ids_with_image_features` |
+| <Link to="/gemma/sqrt-d">4.3</Link> | √d ölçeği, görsel token'lar neden çarpılmıyor, bf16 | `GemmaModel.forward`, `_merge_input_ids_with_image_features` |
 | <Link to="/gemma/rmsnorm">4.4</Link> | RMSNorm: (1+w), float32, keepdim, işlem sırası | `GemmaRMSNorm` |
 | <Link to="/gemma/geglu">4.5</Link> | GeGLU: gate/up/down | `GemmaMLP` |
 | <Link to="/gemma/katman">4.6</Link> | Decoder katmanının iskeleti | `GemmaDecoderLayer` |
