@@ -6,6 +6,7 @@ script'i yeniden çalıştırabilirsin:
     make_prefix_lm_mask -> elle yazılmış beklenen desenle
     load_hf_weights, convert_hf_key -> HF ağırlıkları bizim modele eksiksiz ve doğru adla yükleniyor mu
     PaliGemmaForConditionalGeneration -> HF PaliGemmaForConditionalGeneration (küçük rastgele config, logit'ler)
+    (bf16)             -> aynı model bf16'da HF ile birebir (görüntü ölçeksiz birleştirme)
     generate (src/generate.py) -> HF generate(do_sample=False): token token aynı, eos'ta durma dahil
 
 Çalıştır (proje kökünden):
@@ -83,12 +84,13 @@ B, N_TEXT = 2, 6
 ATOL = 1e-4
 
 
-def build_models():
+def build_models(hidden_size=TEXT["hidden_size"], bf16=False):
+    text = dict(TEXT, hidden_size=hidden_size)
     hf_config = HFPaliGemmaConfig(
-        vision_config=HFSiglipVisionConfig(**VISION, projection_dim=TEXT["hidden_size"]),
-        text_config=HFGemmaConfig(**TEXT, hidden_act="gelu_pytorch_tanh"),
-        image_token_index=IMAGE_TOKEN, projection_dim=TEXT["hidden_size"],
-        hidden_size=TEXT["hidden_size"], vocab_size=TEXT["vocab_size"],
+        vision_config=HFSiglipVisionConfig(**VISION, projection_dim=hidden_size),
+        text_config=HFGemmaConfig(**text, hidden_act="gelu_pytorch_tanh"),
+        image_token_index=IMAGE_TOKEN, projection_dim=hidden_size,
+        hidden_size=hidden_size, vocab_size=text["vocab_size"],
     )
     hf_config._attn_implementation = "eager"
     hf_config.text_config._attn_implementation = "eager"
@@ -102,16 +104,30 @@ def build_models():
 
     ours_config = paligemma.PaliGemmaConfig(
         vision_config=paligemma.SiglipVisionConfig(**VISION),
-        text_config=paligemma.GemmaConfig(**TEXT),
-        image_token_index=IMAGE_TOKEN, projection_dim=TEXT["hidden_size"],
-        hidden_size=TEXT["hidden_size"], vocab_size=TEXT["vocab_size"],
+        text_config=paligemma.GemmaConfig(**text),
+        image_token_index=IMAGE_TOKEN, projection_dim=hidden_size,
+        hidden_size=hidden_size, vocab_size=text["vocab_size"],
     )
-    return hf, paligemma.PaliGemmaForConditionalGeneration(ours_config).eval()
+    if not bf16:
+        return hf, paligemma.PaliGemmaForConditionalGeneration(ours_config).eval()
+
+    # bf16: HF from_pretrained(dtype=bf16) ile yüklenmiş gibi. Düz .to(bf16) RoPE frekanslarını da (buffer) bf16'ya
+    # yuvarlardı, from_pretrained'da float32 kalıyorlar: geri koyuyoruz
+    inv_freq = hf.model.language_model.rotary_emb.inv_freq.clone()
+    hf = hf.to(torch.bfloat16)
+    hf.model.language_model.rotary_emb.inv_freq = inv_freq
+    # Bizimki varsayılan dtype bf16 iken kuruluyor (Colab'daki gibi): inv_freq açıkça float32 olduğu için öyle kalıyor
+    torch.set_default_dtype(torch.bfloat16)
+    try:
+        ours = paligemma.PaliGemmaForConditionalGeneration(ours_config).eval()
+    finally:
+        torch.set_default_dtype(torch.float32)
+    return hf, ours
 
 
-def build_loaded_pair():
+def build_loaded_pair(**kwargs):
     """HF modeli + ağırlıkları src/paligemma.py'deki yükleyiciyle kopyalanmış bizim model."""
-    hf, ours = build_models()
+    hf, ours = build_models(**kwargs)
     paligemma.load_hf_weights(ours, hf.state_dict())
     return hf, ours
 
@@ -196,6 +212,22 @@ def check_model():
     return bool(ok)
 
 
+def check_bf16_exact():
+    # Gerçek model bf16'da çalışıyor. hidden_size=48: sqrt(48) 2'nin kuvveti değil. sqrt(64) = 8 olsaydı
+    # "görüntüyü sqrt(d)'ye böl, sonra hepsini çarp" yöntemi de yuvarlama yapmaz ve bu test o hatayı yakalamazdı
+    hf, ours = build_loaded_pair(hidden_size=48, bf16=True)
+    input_ids, pixel_values, attention_mask = make_inputs()
+    pixel_values = pixel_values.to(torch.bfloat16)
+    with torch.no_grad():
+        hf_logits = hf(input_ids=input_ids, pixel_values=pixel_values, attention_mask=attention_mask,
+                       token_type_ids=torch.zeros_like(input_ids)).logits.float()
+        our_logits = ours(input_ids, pixel_values, attention_mask).float()
+    max_diff = (our_logits - hf_logits).abs().max().item()
+    ok = torch.equal(our_logits, hf_logits)
+    print(f"[{'OK ' if ok else 'HATA'}] bf16, hidden_size=48: logit'ler HF ile birebir aynı (max fark {max_diff:.2e})")
+    return ok
+
+
 def check_generate():
     hf, ours = build_loaded_pair()
     if hf is None:
@@ -236,6 +268,7 @@ def main():
         ("make_prefix_lm_mask", check_prefix_lm_mask),
         ("load_hf_weights", check_loader),
         ("PaliGemmaForConditionalGeneration", check_model),
+        ("PaliGemmaForConditionalGeneration", check_bf16_exact),
         ("generate", check_generate),
     ]
 

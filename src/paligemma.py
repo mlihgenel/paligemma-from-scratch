@@ -121,8 +121,12 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         batch_size, sequence_length = input_ids.shape
         dtype, device = inputs_embeds.dtype, inputs_embeds.device
 
-        # Gemma ileride bütün embedding'leri sqrt(hidden_size) ile çarpacak, görsel özellikler bundan etkilenmesin
-        scaled_image_features = image_features / (self.config.hidden_size ** 0.5)
+        # Metin embedding'leri sqrt(hidden_size) ile çarpılıyor (Gemma'nın embedding ölçeği), görsel özellikler ölçeksiz.
+        # Eskiden görseller önce sqrt(d)'ye bölünüp Gemma hepsini birden çarpıyordu: matematiksel olarak aynı ama bf16'da
+        # iki yuvarlama ekliyordu (sqrt(2048) = 45.25 2'nin kuvveti değil), HF'ye göre logit'lerde ~0.2 ortalama fark çıkıyordu.
+        # Ölçek inputs_embeds'in dtype'ında: HF'nin ölçekli embedding tablosuyla aynı işlem
+        normalizer = torch.tensor(self.config.hidden_size ** 0.5, dtype=inputs_embeds.dtype)
+        scaled_text_embeds = inputs_embeds * normalizer
 
         final_embedding = torch.zeros(batch_size, sequence_length, embed_dim, dtype=dtype, device=device)
 
@@ -135,9 +139,9 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         image_mask_expanded = image_mask.unsqueeze(-1).expand(-1, -1, embed_dim)
         pad_mask_expanded = pad_mask.unsqueeze(-1).expand(-1, -1, embed_dim)
 
-        final_embedding = torch.where(text_mask_expanded, inputs_embeds, final_embedding)
+        final_embedding = torch.where(text_mask_expanded, scaled_text_embeds, final_embedding)
         # torch.where kullanılamaz: görsel özellikler [B, 256, D], dizi [B, T, D]. masked_scatter sırayla yerleştirir
-        final_embedding = final_embedding.masked_scatter(image_mask_expanded, scaled_image_features.to(dtype))
+        final_embedding = final_embedding.masked_scatter(image_mask_expanded, image_features.to(dtype))
         final_embedding = torch.where(pad_mask_expanded, torch.zeros_like(final_embedding), final_embedding)
 
         return final_embedding
@@ -166,5 +170,6 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         position_ids = torch.arange(1, T + 1, device=input_ids.device).unsqueeze(0).expand(B, -1)   # [B, T]
         mask = make_prefix_lm_mask(T, prefix_len, inputs_embeds.dtype, inputs_embeds.device)         # [1, 1, T, T]
 
-        logits = self.language_model(inputs_embeds, attention_mask=mask, position_ids=position_ids)
+        # Metin burada zaten ölçeklendi (_merge...), GemmaModel tekrar çarpmasın
+        logits = self.language_model(inputs_embeds, attention_mask=mask, position_ids=position_ids, scale_embeddings=False)
         return logits

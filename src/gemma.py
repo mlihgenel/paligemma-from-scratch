@@ -244,6 +244,7 @@ class GemmaModel(nn.Module):
         inputs_embeds: torch.Tensor,                           # [B, T, D]
         attention_mask: torch.Tensor | None = None,            # [B or 1, 1, T, T], toplanan maske. Yoksa nedensel
         position_ids: torch.Tensor | None = None,              # [B, T]. Yoksa 0..T-1
+        scale_embeddings: bool = True,                         # False: girdi zaten otoyolun ölçeğinde (PaliGemma kendisi ölçekliyor)
     ) -> torch.Tensor:                                         # [B, T, D]
         B, T, _ = inputs_embeds.shape
         if position_ids is None:
@@ -252,11 +253,12 @@ class GemmaModel(nn.Module):
             attention_mask = make_causal_mask(T, inputs_embeds.dtype, inputs_embeds.device)
 
         hidden_states = inputs_embeds
-        # Embedding'leri otoyolun ölçeğine (eleman başına ~1) taşı. Görsel token'lar paligemma.py'de
-        # sqrt(d)'ye bölündüğü için onlar değişmeden kalıyor. Ölçek hidden_states'in dtype'ında:
-        # bf16'da sqrt(2048) = 45.25'e yuvarlanıyor, HF de öyle yapıyor
-        normalizer = torch.tensor(self.config.hidden_size ** 0.5, dtype=hidden_states.dtype)
-        hidden_states = hidden_states * normalizer
+        # Metin embedding'lerini otoyolun ölçeğine (eleman başına ~1) taşı. Ölçek hidden_states'in dtype'ında:
+        # bf16'da sqrt(2048) = 45.25'e yuvarlanıyor, HF de öyle yapıyor. PaliGemma'da bunu paligemma.py yapıyor
+        # (yalnızca metne: görsel özellikler projektörden zaten bu ölçekte çıkıyor), burada tekrar çarpılmamalı
+        if scale_embeddings:
+            normalizer = torch.tensor(self.config.hidden_size ** 0.5, dtype=hidden_states.dtype)
+            hidden_states = hidden_states * normalizer
 
         position_embeddings = self.rotary_emb(hidden_states, position_ids)   # (cos, sin), [B, T, head_dim]
         for decoder_layer in self.layers:
@@ -286,8 +288,9 @@ class GemmaForCausalLM(nn.Module):
         inputs_embeds: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
+        scale_embeddings: bool = True,
     ) -> torch.Tensor:
-        hidden_states = self.model(inputs_embeds, attention_mask, position_ids)  # [B, T, hidden_size]
+        hidden_states = self.model(inputs_embeds, attention_mask, position_ids, scale_embeddings)  # [B, T, hidden_size]
         logits = self.lm_head(hidden_states)       # [B, T, vocab_size]
         return logits.float()
     
