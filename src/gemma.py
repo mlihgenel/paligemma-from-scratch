@@ -117,6 +117,7 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     # [B, n_kv, T, hd] -> [B, n_kv, 1, T, hd] -> [B, n_kv, n_rep, T, hd]: expand veri kopyalamıyor, sadece görünüm
     x = x[:, :, None, :, :].expand(B, n_kv_heads, n_rep, T, head_dim)
     # Birleştirme: ilk n_rep head ilk KV head'in kopyası, sonraki n_rep head ikincinin... (Q head'leri de aynı sırayla gruplanıyor)
+    # n_kv = 1'de (MQA) reshape de kopyalamıyor, görünüm döndürüyor. n_kv > 1'de bellek düzeni sürekli olmadığı için kopyalıyor
     return x.reshape(B, n_kv_heads * n_rep, T, head_dim)           # [B, n_heads, T, hd]
 
 
