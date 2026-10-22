@@ -3,6 +3,7 @@
 .prose > * { max-width: var(--measure); }
 .prose h1 { font-family: var(--display); font-size: 44px; line-height: 1.08; letter-spacing: -0.025em; font-weight: 700; margin: 6px 0 18px; }
 .prose h2 { font-family: var(--display); font-size: 26px; line-height: 1.2; letter-spacing: -0.015em; font-weight: 650; margin: 72px 0 12px; }
+.prose h2, .prose a[id] { scroll-margin-top: 72px; }   /* yapışkan üst çubuk (52 px) başlığı örtmesin */
 .prose h3 { font-family: var(--display); font-size: 19px; font-weight: 600; margin: 40px 0 6px; }
 .prose p { margin: 0 0 1.05em; }
 .prose .lead { font-size: 21px; line-height: 1.6; color: var(--fg-muted); margin-bottom: 40px; }

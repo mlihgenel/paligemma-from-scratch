@@ -255,3 +255,66 @@ test("4.3 √d: sayfada artık görsel token'ların ÷√d'si anlatılmıyor, ya
   await expect(body).toContainText("%100");
   await expect(body).not.toContainText("Colab'da yeniden koşu bekliyor");
 });
+
+// --- "Bu sayfada": çok geniş ekranda sağda sessiz liste, daha dar ekranda üst çubukta açılır liste ---
+test("bu sayfada: 1920'de sağda liste, geniş şekillerle çakışmıyor, tıklayınca bölüme gidiyor ve adres güncelleniyor", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1000 });
+  await page.goto("http://localhost:5173/#/gemma/attention", { waitUntil: "networkidle" });
+  const toc = page.locator(".pagetoc");
+  await expect(toc).toBeVisible();
+  const items = toc.locator("a");
+  await expect(items.nth(3)).toBeVisible();                     // başlıklar MDX yüklenince geliyor
+  await expect(page.getByRole("button", { name: /Bu sayfada/ })).toBeHidden();   // liste varken açılır menü yok
+  const name = (await items.nth(2).textContent())!;
+  await items.nth(2).click();
+  await expect(toc.locator("a[aria-current='location']")).toHaveText(name, { timeout: 5000 });
+  expect(page.url()).toMatch(/#\/gemma\/attention#[a-z0-9-]+$/);
+  // Liste, ortalanan geniş şekillerin (.wide, .scrolly) sağ kenarının dışında
+  const [left, widest] = await page.evaluate(() => [
+    document.querySelector(".pagetoc")!.getBoundingClientRect().left,
+    Math.max(...[...document.querySelectorAll("article.prose .wide, article.prose .scrolly")].map((e) => e.getBoundingClientRect().right)),
+  ]);
+  expect(left).toBeGreaterThan(widest);
+});
+
+test("bu sayfada: 1440'ta liste yok, üst çubukta şu anki bölüm ve açılır liste var", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("http://localhost:5173/#/gemma/attention", { waitUntil: "networkidle" });
+  await expect(page.locator(".pagetoc")).toBeHidden();
+  const btn = page.getByRole("button", { name: /Bu sayfada/ });
+  await expect(btn).toBeVisible();
+  await btn.click();
+  const pop = page.locator(".sections-pop");
+  await expect(pop.locator("a").nth(3)).toBeVisible();
+  const name = (await pop.locator("a").nth(2).textContent())!;
+  await pop.locator("a").nth(2).click();
+  await expect(pop).toBeHidden();                               // seçince kapanıyor
+  await expect(page.locator(".topbar .where .cur")).toContainText(name, { timeout: 5000 });   // üst çubuk o bölümü gösteriyor
+  await btn.click();
+  await expect(pop).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(pop).toBeHidden();
+});
+
+test("bu sayfada: mobilde açılır liste ekranın dışına taşmıyor", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("http://localhost:5173/#/gemma/attention", { waitUntil: "networkidle" });
+  const btn = page.getByRole("button", { name: /Bu sayfada/ });
+  await expect(btn).toBeVisible();
+  await btn.click();
+  const box = await page.locator(".sections-pop").boundingBox();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+});
+
+test("bu sayfada: derin link bölüme kaydırıyor, tek bölümlü sayfada liste yok", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("http://localhost:5173/#/gemma/attention#maske-kim-kimi-gorebilir", { waitUntil: "networkidle" });
+  const h = page.getByRole("heading", { name: "Maske: kim kimi görebilir?" });
+  await expect.poll(async () => (await h.boundingBox())?.y ?? 9999, { timeout: 8000 }).toBeLessThan(200);   // üst çubuğun hemen altında, örtülmüyor
+  expect((await h.boundingBox())!.y).toBeGreaterThan(52);
+  await page.setViewportSize({ width: 1920, height: 1000 });
+  await page.goto("http://localhost:5173/#/", { waitUntil: "networkidle" });
+  await page.waitForTimeout(800);
+  await expect(page.locator(".pagetoc")).toHaveCount(0);
+});

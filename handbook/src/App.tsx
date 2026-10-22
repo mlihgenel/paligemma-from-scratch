@@ -4,6 +4,7 @@ import { MDXProvider } from "@mdx-js/react";
 import { PAGES, PART_TITLE, Page, Part, REDIRECTS, partVars } from "./registry";
 import { ArchDiagram } from "./interact/ArchDiagram";
 import { useStore } from "./store";
+import { goToSection, useSectionsStore, useSectionsTracker } from "./lib/useSections";
 
 function useEffectiveTheme() {
   const theme = useStore((s) => s.theme);
@@ -31,16 +32,68 @@ function useScrollProgress() {
   return p;
 }
 
+/** Açık sayfanın bölümleri. Sağdaki listede de, dar ekrandaki açılır menüde de aynı maddeler */
+function SectionList({ onPick }: { onPick?: () => void }) {
+  const { pathname } = useLocation();
+  const sections = useSectionsStore((s) => s.sections);
+  const active = useSectionsStore((s) => s.active);
+  return (
+    <>
+      {sections.map((sec) => (
+        <a key={sec.id} href={`#${pathname}#${sec.id}`} className={sec.id === active ? "on" : ""} aria-current={sec.id === active ? "location" : undefined}
+           onClick={(e) => { e.preventDefault(); goToSection(sec.id, pathname); onPick?.(); }}>
+          {sec.text}
+        </a>
+      ))}
+    </>
+  );
+}
+
+/** Çok geniş ekranda (≥ 1680 px), geniş şekillerin kapladığı alanın dışında, kutusuz sessiz liste */
+function PageToc() {
+  const count = useSectionsStore((s) => s.sections.length);
+  if (count < 2) return null;
+  return (
+    <nav className="pagetoc" aria-label="Bu sayfada">
+      <div className="pt-label">Bu sayfada</div>
+      <div className="pt-track"><SectionList /></div>
+    </nav>
+  );
+}
+
+/** Sağdaki liste sığmayan ekranlarda (< 1680 px) üst çubukta açılır liste */
+function SectionsMenu() {
+  const count = useSectionsStore((s) => s.sections.length);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const away = (e: MouseEvent) => { if (!(e.target as HTMLElement).closest(".sections-menu")) setOpen(false); };
+    window.addEventListener("keydown", key);
+    window.addEventListener("mousedown", away);
+    return () => { window.removeEventListener("keydown", key); window.removeEventListener("mousedown", away); };
+  }, [open]);
+  if (count < 2) return null;
+  return (
+    <div className="sections-menu">
+      <button className="icon-btn" onClick={() => setOpen(!open)} aria-expanded={open}>Bu sayfada <span className="caret" style={{ fontSize: 11 }}>▾</span></button>
+      {open && <nav className="sections-pop" aria-label="Bu sayfada"><SectionList onPick={() => setOpen(false)} /></nav>}
+    </div>
+  );
+}
+
 const THEMES = ["auto", "light", "dark"] as const;
 const THEME_LABEL = { auto: "◐ Oto", light: "☀ Açık", dark: "☾ Koyu" };
 
 function TopBar({ page, onToc }: { page: Page; onToc: () => void }) {
   const p = useScrollProgress();
   const { theme, setTheme } = useStore();
+  const cur = useSectionsStore((s) => s.sections.find((x) => x.id === s.active)?.text);
   return (
     <header className="topbar">
       <Link to="/" className="brand">PaliGemma <span>el kitabı</span></Link>
-      <div className="where">{page.num && <span className="mono" style={{ marginRight: 8 }}>{page.num}</span>}<b>{page.title}</b></div>
+      <div className="where">{page.num && <span className="mono" style={{ marginRight: 8 }}>{page.num}</span>}<b>{page.title}</b>{cur && <span className="cur"> · {cur}</span>}</div>
+      <SectionsMenu />
       <button className="icon-btn" onClick={() => setTheme(THEMES[(THEMES.indexOf(theme) + 1) % 3])} title="Tema">{THEME_LABEL[theme]}</button>
       <button className="icon-btn" onClick={onToc} style={{ color: "var(--fg)" }}>İçindekiler <span style={{ fontSize: 16, lineHeight: 1 }}>☰</span></button>
       <div className="progress" style={{ width: `${p * 100}%` }} />
@@ -84,9 +137,18 @@ function Toc({ current, onClose }: { current: Page; onClose: () => void }) {
 function PageView({ page }: { page: Page }) {
   const { pathname, hash } = useLocation();
   const [toc, setToc] = useState(false);
+  useSectionsTracker(pathname);
   useEffect(() => {
-    if (hash) setTimeout(() => document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: "smooth" }), 300);
-    else window.scrollTo(0, 0);
+    if (!hash) { window.scrollTo(0, 0); return; }
+    // MDX tembel yükleniyor: eleman gelene kadar dene (en çok ~3 sn), bulununca yerleşimin oturması için kısa bekle
+    const id = decodeURIComponent(hash.slice(1));
+    let tries = 0, go = 0;
+    const poll = window.setInterval(() => {
+      const el = document.getElementById(id);
+      if (el) { window.clearInterval(poll); go = window.setTimeout(() => el.scrollIntoView({ behavior: "smooth" }), 250); }
+      else if (++tries > 30) window.clearInterval(poll);
+    }, 100);
+    return () => { window.clearInterval(poll); window.clearTimeout(go); };
   }, [pathname, hash]);
   const ri = PAGES.indexOf(page);
   const prev = ri > 0 ? PAGES[ri - 1] : null;
@@ -96,6 +158,7 @@ function PageView({ page }: { page: Page }) {
       <TopBar page={page} onToc={() => setToc(true)} />
       {toc && <Toc current={page} onClose={() => setToc(false)} />}
       <main className="page" style={partVars(page.part)}>
+        <PageToc />
         {page.num && (
           <div className="page-head">
             <div className="num">{page.num}</div>
