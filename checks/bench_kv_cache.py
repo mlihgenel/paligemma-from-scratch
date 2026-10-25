@@ -73,7 +73,7 @@ def bench_step(model, input_ids, pixel_values, device, n_answer):
     full_ids = torch.cat([input_ids, answer], dim=1)                    # [1, L]
     L = full_ids.shape[1]
 
-    # Cache yok: aşama 6'daki gibi bütün dizi ve SigLIP baştan
+    # Cache yok: bütün dizi ve SigLIP baştan
     no_cache = timed(lambda: model(full_ids, pixel_values, torch.ones_like(full_ids), prefix_len=prefix_len), device)
 
     # Cache: önce L - 1 token'lık cache'i kur (ölçüme dahil değil), sonra sadece son token'ı ver.

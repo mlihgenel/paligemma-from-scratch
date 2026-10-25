@@ -222,7 +222,7 @@ def check_kv_cache():
 
     ok = True
     with torch.no_grad():
-        # Referans: cache'siz, tam dizi tek seferde (aşama 6'daki gibi)
+        # Referans: cache'siz, tam dizi tek seferde
         full = ours(input_ids, pixel_values, attention_mask, prefix_len=prefix_len)          # [B, T, vocab]
 
         # Prefill: sadece prefix, görüntüyle. Sonra suffix token'ları birer birer, görüntüsüz

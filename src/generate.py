@@ -6,7 +6,7 @@ from gemma import KVCache
 # Greedy decode: her adımda en yüksek olasılıklı token seçiliyor, rastgelelik yok.
 # use_cache=True: görüntü + komut bir kez işleniyor (prefill), K/V'leri cache'e yazılıyor. Sonraki her adımda
 # modele sadece son üretilen token giriyor, SigLIP bir daha çalışmıyor. Adım başına maliyet neredeyse sabit.
-# use_cache=False (aşama 6): her adımda bütün dizi baştan hesaplanıyor, maliyet dizi uzunluğuyla büyüyor.
+# use_cache=False: her adımda bütün dizi baştan hesaplanıyor, maliyet dizi uzunluğuyla büyüyor.
 # İkisi aynı token'ları üretmeli, False karşılaştırma ve süre ölçümü için duruyor
 @torch.no_grad()
 def generate(

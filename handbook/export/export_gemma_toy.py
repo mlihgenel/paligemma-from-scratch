@@ -1,4 +1,4 @@
-"""Aşama 4 deneyleri: senin gemma.py sınıflarınla, oyuncak boyutta.
+"""Gemma deneyleri: senin gemma.py sınıflarınla, oyuncak boyutta.
 
 Oyuncak config: hidden 256, intermediate 2048, 6 katman. Embedding'ler gerçek Gemma'nın eleman
 dağılımıyla (std ≈ 0.186), RMSNorm ağırlıkları gerçek checkpoint'in ilk 256 boyutundan

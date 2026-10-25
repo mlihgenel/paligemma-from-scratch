@@ -171,7 +171,7 @@ class PaliGemmaForConditionalGeneration(nn.Module):
             mask = make_causal_mask(T, inputs_embeds.dtype, inputs_embeds.device, past_len)
             return self.language_model(inputs_embeds, attention_mask=mask, position_ids=position_ids,
                                        scale_embeddings=False, kv_cache=kv_cache)
-        # Üretimde (aşama 6'nın sonu) girdiye cevap token'ları eklenip forward tekrar çağrılacak: prefix o zaman
+        # Cache'siz üretimde girdiye cevap token'ları eklenip forward tekrar çağrılıyor: prefix o zaman
         # ilk komutun uzunluğu, T değil. İlk çağrıda cevap yok, bütün girdi prefix
         if prefix_len is None:
             prefix_len = T

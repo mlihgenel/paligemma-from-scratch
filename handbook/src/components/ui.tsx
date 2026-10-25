@@ -110,7 +110,7 @@ export function Predict({ q, children, hint }: { q: ReactNode; children: ReactNo
   );
 }
 
-/** ROADMAP kavram sorusu, cevap açılır panelde */
+/** Kavram sorusu, cevap açılır panelde */
 export function ConceptQ({ n, q, children }: { n?: number | string; q: ReactNode; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
