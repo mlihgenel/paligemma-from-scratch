@@ -121,16 +121,52 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     return x.reshape(B, n_kv_heads * n_rep, T, head_dim)           # [B, n_heads, T, hd]
 
 
+# Üretimde her adımda sadece yeni token'ın K/V'si hesaplanıyor, geçmiş token'larınki burada saklanıyor.
+# Q saklanmıyor: geçmiş token'ların sorusu bir kez soruldu, cevabı zaten üretildi. Yeni token'ın Q'su
+# ise bütün geçmiş K'lara bakmak zorunda. Katman başına ayrı K ve V tensörü (her katmanın K/V'si farklı)
+class KVCache:
+    def __init__(self):
+        self.key_cache: list[torch.Tensor] = []      # katman başına [B, n_kv, T_geçmiş, hd]
+        self.value_cache: list[torch.Tensor] = []
+
+    # Kaç token görüldü. Bütün katmanlar aynı uzunlukta, 0. katmana bakmak yeterli. Boşsa 0 (prefill öncesi)
+    def get_seq_length(self) -> int:
+        if len(self.key_cache) == 0:
+            return 0
+        return self.key_cache[0].shape[-2]
+
+    # Yeni K/V'yi (RoPE uygulanmış) geçmişin sonuna ekle, birleşmiş halini döndür: attention bunu kullanacak.
+    # Prefill'de T_yeni = prompt uzunluğu, üretimde T_yeni = 1
+    def update(
+        self,
+        key_states: torch.Tensor,      # [B, n_kv, T_yeni, hd]
+        value_states: torch.Tensor,    # [B, n_kv, T_yeni, hd]
+        layer_idx: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if len(self.key_cache) <= layer_idx:
+            # Bu katman ilk kez geliyor (prefill): saklanacak geçmiş yok, olduğu gibi sakla
+            self.key_cache.append(key_states)
+            self.value_cache.append(value_states)
+        else:
+            # Dizi ekseninde (-2) birleştir: [B, n_kv, T_geçmiş, hd] + [B, n_kv, T_yeni, hd] -> [B, n_kv, T_geçmiş + T_yeni, hd]
+            self.key_cache[layer_idx] = torch.cat([self.key_cache[layer_idx], key_states], dim=-2)
+            self.value_cache[layer_idx] = torch.cat([self.value_cache[layer_idx], value_states], dim=-2)
+        return self.key_cache[layer_idx], self.value_cache[layer_idx]
+
+
 # Toplanan maske: izinli yerler 0, yasak yerler en küçük sayı. Token i sadece j <= i olanlara bakabilir.
-# -inf yerine finfo.min: tamamen yasaklanmış bir satır -inf ile softmax'ta NaN verir, finfo.min ile eşit ağırlık verir
-def make_causal_mask(T: int, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
-    mask = torch.full((T, T), torch.finfo(dtype).min, dtype=dtype, device=device)
-    mask = torch.triu(mask, diagonal=1)          # köşegenin üstü (j > i) yasak, geri kalan 0
-    return mask[None, None]                       # [1, 1, T, T]: batch ve head eksenlerinde yayılıyor
+# -inf yerine finfo.min: tamamen yasaklanmış bir satır -inf ile softmax'ta NaN verir, finfo.min ile eşit ağırlık verir.
+# past_len: cache'te zaten duran token sayısı. Satırlar yeni T token, sütunlar geçmiş + yeni (past_len + T) token.
+# Yeni token i'nin gerçek konumu past_len + i: geçmişin hepsini ve yeniler arasında kendisine kadar olanları görüyor
+def make_causal_mask(T: int, dtype: torch.dtype, device: torch.device, past_len: int = 0) -> torch.Tensor:
+    mask = torch.full((T, past_len + T), torch.finfo(dtype).min, dtype=dtype, device=device)
+    mask = torch.triu(mask, diagonal=past_len + 1)   # j > past_len + i yasak. past_len = 0'da eski kare maske
+    return mask[None, None]                           # [1, 1, T, past_len + T]: batch ve head eksenlerinde yayılıyor
 
 
 # Her token, kendi Q'sunu bütün K'larla karşılaştırıp (skor) V'lerin ağırlıklı toplamını alıyor.
-# Q 8 head, K/V 1 head (MQA). KV cache henüz yok: tam dizi tek seferde işleniyor (aşama 7'de cache eklenecek)
+# Q 8 head, K/V 1 head (MQA). kv_cache verilirse geçmiş token'ların K/V'si oradan geliyor:
+# Q sadece yeni token'lar için (T_yeni), K/V geçmiş + yeni bütün token'lar için (T_top = T_geçmiş + T_yeni)
 class GemmaAttention(nn.Module):
     def __init__(self, config: GemmaConfig, layer_idx: int):
         super().__init__()
@@ -152,9 +188,10 @@ class GemmaAttention(nn.Module):
 
     def forward(
         self,
-        hidden_states: torch.Tensor,                         # [B, T, D]
-        position_embeddings: tuple[torch.Tensor, torch.Tensor],   # (cos, sin), her biri [B, T, head_dim]
-        attention_mask: torch.Tensor | None = None,          # [B, 1, T, T], toplanan maske (izinli 0, yasak -inf)
+        hidden_states: torch.Tensor,                         # [B, T, D], cache'le üretimde T = 1
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],   # (cos, sin), her biri [B, T, head_dim]: yeni token'ların konumları
+        attention_mask: torch.Tensor | None = None,          # [B, 1, T, T_top], toplanan maske (izinli 0, yasak -inf)
+        kv_cache: KVCache | None = None,
     ) -> torch.Tensor:
         B, T, _ = hidden_states.shape
 
@@ -167,19 +204,25 @@ class GemmaAttention(nn.Module):
         cos, sin = position_embeddings
         q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
-        # K/V'yi geçici olarak Q'nun head sayısına genişlet (sadece hesap anında)
-        k = repeat_kv(k, self.num_kv_groups)                  # [B, n_heads, T, hd]
-        v = repeat_kv(v, self.num_kv_groups)                  # [B, n_heads, T, hd]
+        # Yeni K/V'yi cache'e ekle, geçmişle birleşmiş halini al. Yer önemli: RoPE'dan SONRA (her token kendi
+        # konumunda bir kez döndürülüp saklanıyor), repeat_kv'den ÖNCE (cache'te n_kv head duruyor, n_heads değil)
+        if kv_cache is not None:
+            k, v = kv_cache.update(k, v, self.layer_idx)      # [B, n_kv, T_top, hd]
 
-        # Skor: [B, n_heads, T, hd] @ [B, n_heads, hd, T] -> [B, n_heads, T, T]; scores[i, j] = i. token'ın j. token'a ilgisi
+        # K/V'yi geçici olarak Q'nun head sayısına genişlet (sadece hesap anında)
+        k = repeat_kv(k, self.num_kv_groups)                  # [B, n_heads, T_top, hd]
+        v = repeat_kv(v, self.num_kv_groups)                  # [B, n_heads, T_top, hd]
+
+        # Skor: [B, n_heads, T, hd] @ [B, n_heads, hd, T_top] -> [B, n_heads, T, T_top]; scores[i, j] = i. yeni token'ın j. token'a ilgisi
+        # Cache yoksa T_top = T ve kare matris. Üretimde T = 1: tek satır, yeni token bütün geçmişe bakıyor
         # sqrt(head_dim)'e bölme: yoksa hd büyüdükçe skorlar büyür, softmax tek bir token'a sıkışır
         scores = torch.matmul(q, k.transpose(2, 3)) * self.scaling
         if attention_mask is not None:
             scores = scores + attention_mask                  # yasak yerler -inf -> softmax'ta 0
         # Softmax float32'de: bf16'da toplam yuvarlama hatası birikiyor, çıkışı tekrar orijinal dtype'a çeviriyoruz
-        weights = F.softmax(scores, dim=-1, dtype=torch.float32).to(q.dtype)    # [B, n_heads, T, T], satırlar 1'e toplanıyor
+        weights = F.softmax(scores, dim=-1, dtype=torch.float32).to(q.dtype)    # [B, n_heads, T, T_top], satırlar 1'e toplanıyor
 
-        # Ağırlıklı V toplamı: [B, n_heads, T, T] @ [B, n_heads, T, hd] -> [B, n_heads, T, hd]
+        # Ağırlıklı V toplamı: [B, n_heads, T, T_top] @ [B, n_heads, T_top, hd] -> [B, n_heads, T, hd]
         out = torch.matmul(weights, v)
         # Head'leri tekrar yan yana birleştir: [B, n_heads, T, hd] -> [B, T, n_heads, hd] -> [B, T, n_heads * hd]
         out = out.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
@@ -203,12 +246,13 @@ class GemmaDecoderLayer(nn.Module):
         self,
         hidden_states: torch.Tensor,                              # [B, T, D]
         position_embeddings: tuple[torch.Tensor, torch.Tensor],   # (cos, sin), her biri [B, T, head_dim]
-        attention_mask: torch.Tensor | None = None,               # [B or 1, 1, T, T], toplanan maske
+        attention_mask: torch.Tensor | None = None,               # [B or 1, 1, T, T_top], toplanan maske
+        kv_cache: KVCache | None = None,                          # sadece attention'a gidiyor, MLP token'ları karıştırmıyor
     ) -> torch.Tensor:
         # Attention bloğu. Residual norm'dan ÖNCE saklanıyor, yoksa akışın kendisi normalize edilmiş olur
         residual = hidden_states                                  # [B, T, D]
         hidden_states = self.input_layernorm(hidden_states)
-        hidden_states = self.self_attn(hidden_states, position_embeddings, attention_mask)
+        hidden_states = self.self_attn(hidden_states, position_embeddings, attention_mask, kv_cache)
         hidden_states = residual + hidden_states 
         
         # MLP bloğu, aynı desen
@@ -241,16 +285,20 @@ class GemmaModel(nn.Module):
 
     def forward(
         self,
-        inputs_embeds: torch.Tensor,                           # [B, T, D]
-        attention_mask: torch.Tensor | None = None,            # [B or 1, 1, T, T], toplanan maske. Yoksa nedensel
-        position_ids: torch.Tensor | None = None,              # [B, T]. Yoksa 0..T-1
+        inputs_embeds: torch.Tensor,                           # [B, T, D], cache'le üretimde T = 1
+        attention_mask: torch.Tensor | None = None,            # [B or 1, 1, T, T_top], toplanan maske. Yoksa nedensel
+        position_ids: torch.Tensor | None = None,              # [B, T]. Yoksa past_len..past_len+T-1
         scale_embeddings: bool = True,                         # False: girdi zaten otoyolun ölçeğinde (PaliGemma kendisi ölçekliyor)
+        kv_cache: KVCache | None = None,                       # verilirse katmanlar geçmiş K/V'yi buradan okuyup yenisini ekliyor
     ) -> torch.Tensor:                                         # [B, T, D]
         B, T, _ = inputs_embeds.shape
+        # Geçmiş uzunluğu katmanlar cache'i güncellemeden ÖNCE okunmalı: 0. katman ekledikten sonra T kadar artıyor
+        past_len = kv_cache.get_seq_length() if kv_cache is not None else 0
         if position_ids is None:
-            position_ids = torch.arange(T, device=inputs_embeds.device).unsqueeze(0).expand(B, -1)
+            # Yeni token'lar geçmişin kaldığı yerden devam ediyor. Cache'siz 0'dan başlamak, RoPE'u yanlış konumda döndürür
+            position_ids = torch.arange(past_len, past_len + T, device=inputs_embeds.device).unsqueeze(0).expand(B, -1)
         if attention_mask is None:
-            attention_mask = make_causal_mask(T, inputs_embeds.dtype, inputs_embeds.device)
+            attention_mask = make_causal_mask(T, inputs_embeds.dtype, inputs_embeds.device, past_len)
 
         hidden_states = inputs_embeds
         # Metin embedding'lerini otoyolun ölçeğine (eleman başına ~1) taşı. Ölçek hidden_states'in dtype'ında:
@@ -262,7 +310,7 @@ class GemmaModel(nn.Module):
 
         position_embeddings = self.rotary_emb(hidden_states, position_ids)   # (cos, sin), [B, T, head_dim]
         for decoder_layer in self.layers:
-            hidden_states = decoder_layer(hidden_states, position_embeddings, attention_mask)
+            hidden_states = decoder_layer(hidden_states, position_embeddings, attention_mask, kv_cache)
 
         hidden_states = self.norm(hidden_states)
         return hidden_states
@@ -289,8 +337,9 @@ class GemmaForCausalLM(nn.Module):
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
         scale_embeddings: bool = True,
+        kv_cache: KVCache | None = None,
     ) -> torch.Tensor:
-        hidden_states = self.model(inputs_embeds, attention_mask, position_ids, scale_embeddings)  # [B, T, hidden_size]
+        hidden_states = self.model(inputs_embeds, attention_mask, position_ids, scale_embeddings, kv_cache)  # [B, T, hidden_size]
         logits = self.lm_head(hidden_states)       # [B, T, vocab_size]
         return logits.float()
     

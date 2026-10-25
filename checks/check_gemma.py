@@ -7,9 +7,11 @@ yani her yeni sınıfı yazdıkça script'i yeniden çalıştırabilirsin:
     GemmaMLP           -> HF GemmaMLP
     GemmaRotaryEmbedding -> HF GemmaRotaryEmbedding + apply_rotary_pos_emb (cos/sin ve döndürülmüş Q/K)
     repeat_kv          -> HF repeat_kv (MQA ve n_kv > 1 olan GQA durumları)
-    GemmaAttention     -> HF GemmaAttention (eager, nedensel maskeli ve maskesiz)
+    KVCache            -> HF DynamicCache (prefill + token token ekleme, uzunluk)
+    GemmaAttention     -> HF GemmaAttention (eager, nedensel maskeli ve maskesiz; cache'le prefill + token token)
     GemmaDecoderLayer  -> HF GemmaDecoderLayer (attention + MLP + iki norm, nedensel maskeyle)
-    GemmaModel         -> HF GemmaModel (embedding ölçeği + RoPE + nedensel maske + bütün katmanlar + son norm)
+    GemmaModel         -> HF GemmaModel (embedding ölçeği + RoPE + nedensel maske + bütün katmanlar + son norm;
+                          cache'le prefill + token token, konum ve maske cache uzunluğundan)
     GemmaForCausalLM   -> HF GemmaForCausalLM (logit'ler ve weight tying)
 
 Çalıştır (proje kökünden):
@@ -23,6 +25,7 @@ import sys
 from pathlib import Path
 
 import torch
+from transformers import DynamicCache
 from transformers import GemmaConfig as HFGemmaConfig
 from transformers import GemmaForCausalLM as HFGemmaForCausalLM
 from transformers.models.gemma.modeling_gemma import GemmaAttention as HFGemmaAttention
@@ -154,6 +157,28 @@ def check_repeat_kv():
     return bool(ok)
 
 
+def check_kv_cache():
+    n_kv, hd, n_layers = SMALL["num_key_value_heads"], SMALL["head_dim"], SMALL["num_hidden_layers"]
+    ours, theirs = gemma.KVCache(), DynamicCache()
+    ok = ours.get_seq_length() == 0
+    print(f"[{'OK ' if ok else 'HATA'}] KVCache boşken uzunluk 0")
+    # Önce prefill (T token), sonra 3 adım token token üretim. Her adımda bütün katmanlar güncelleniyor
+    for step, t_new in enumerate((T, 1, 1, 1)):
+        for layer in range(n_layers):
+            k, v = torch.randn(B, n_kv, t_new, hd), torch.randn(B, n_kv, t_new, hd)
+            ok_k, ok_v = ours.update(k, v, layer)
+            hf_k, hf_v = theirs.update(k, v, layer)
+            if layer == n_layers - 1:
+                ok &= compare(f"KVCache adım {step} (T_yeni={t_new}) K, katman {layer}", ok_k, hf_k, exact=True)
+                ok &= compare(f"KVCache adım {step} (T_yeni={t_new}) V, katman {layer}", ok_v, hf_v, exact=True)
+            else:
+                ok &= torch.equal(ok_k, hf_k) and torch.equal(ok_v, hf_v)
+    same_len = ours.get_seq_length() == theirs.get_seq_length() == T + 3
+    print(f"[{'OK ' if same_len else 'HATA'}] KVCache uzunluk: bizim {ours.get_seq_length()}, "
+          f"HF {theirs.get_seq_length()}, beklenen {T + 3}")
+    return bool(ok and same_len)
+
+
 def check_attention():
     hf_config = HFGemmaConfig(**SMALL, hidden_act="gelu_pytorch_tanh")
     hf_config._attn_implementation = "eager"      # sdpa/flash kernel'leri değil, yukarıda yazılan matematiğin kendisi
@@ -181,7 +206,25 @@ def check_attention():
         out1, out2 = ours(x, (cos, sin), mask), ours(x2, (cos, sin), mask)
         causal = torch.allclose(out1[:, :-1], out2[:, :-1], atol=ATOL) and not torch.allclose(out1[:, -1], out2[:, -1])
         print(f"[{'OK ' if causal else 'HATA'}] GemmaAttention: son token değişince önceki çıktılar aynı kalıyor")
-    return bool(ok_mask and ok_nomask and causal)
+
+        ok_cache = True
+        if hasattr(gemma, "KVCache"):
+            # Cache'le: ilk T-3 token prefill (nedensel maske), kalan 3 token tek tek. Tek token'ın maskesi tamamen 0:
+            # geçmişin hepsine bakabilir, gelecek zaten cache'te yok. Konumu (RoPE) cache uzunluğu belirliyor
+            ours_cache, hf_cache = gemma.KVCache(), DynamicCache()
+            P = T - 3
+            outs = []
+            for start, end in [(0, P)] + [(t, t + 1) for t in range(P, T)]:
+                step_mask = mask[:, :, start:end, :end]                 # [B, 1, T_yeni, T_top]
+                cs = (cos[:, start:end], sin[:, start:end])
+                o = ours(x[:, start:end], cs, step_mask, kv_cache=ours_cache)
+                h = hf(x[:, start:end], cs, step_mask, past_key_values=hf_cache)[0]
+                ok_cache &= compare(f"GemmaAttention cache'li, token {start}..{end - 1}", o, h)
+                outs.append(o)
+            # Asıl iddia: cache'li adımları birleştirince tam diziyi tek seferde işlemekle aynı sonuç
+            ok_cache &= compare("GemmaAttention cache'li adımlar = cache'siz tam dizi",
+                                torch.cat(outs, dim=1), ours(x, (cos, sin), mask))
+    return bool(ok_mask and ok_nomask and causal and ok_cache)
 
 
 def hf_eager_config():
@@ -243,7 +286,25 @@ def check_model():
 
     with torch.no_grad():
         raw, scaled = scaled_embeds(ours)
-        return compare("GemmaModel", ours(raw), hf(inputs_embeds=scaled).last_hidden_state)
+        ok = compare("GemmaModel", ours(raw), hf(inputs_embeds=scaled).last_hidden_state)
+
+        if hasattr(gemma, "KVCache"):
+            # Konum ve maske verilmiyor: ikisi de cache uzunluğundan çıkmalı. HF de aynısını kendi içinde yapıyor
+            ours_cache, hf_cache = gemma.KVCache(), DynamicCache()
+            P = T - 3
+            outs = []
+            for start, end in [(0, P)] + [(t, t + 1) for t in range(P, T)]:
+                o = ours(raw[:, start:end], kv_cache=ours_cache)
+                h = hf(inputs_embeds=scaled[:, start:end], past_key_values=hf_cache, use_cache=True).last_hidden_state
+                ok &= compare(f"GemmaModel cache'li, token {start}..{end - 1}", o, h)
+                outs.append(o)
+            ok &= compare("GemmaModel cache'li adımlar = cache'siz tam dizi", torch.cat(outs, dim=1), ours(raw))
+
+            # Geçmiş varken birden fazla yeni token (past_len > 0, T > 1): maske dikdörtgen olmalı
+            rect = gemma.make_causal_mask(3, torch.float32, torch.device("cpu"), past_len=4)[0, 0]
+            expected = gemma.make_causal_mask(7, torch.float32, torch.device("cpu"))[0, 0, 4:]
+            ok &= compare("make_causal_mask past_len=4, T=3 = kare maskenin son 3 satırı", rect, expected, exact=True)
+        return bool(ok)
 
 
 def check_causal_lm():
@@ -273,6 +334,7 @@ def main():
         ("GemmaMLP", check_mlp),
         ("GemmaRotaryEmbedding", check_rope),
         ("repeat_kv", check_repeat_kv),
+        ("KVCache", check_kv_cache),
         ("GemmaAttention", check_attention),
         ("GemmaDecoderLayer", check_decoder_layer),
         ("GemmaModel", check_model),
