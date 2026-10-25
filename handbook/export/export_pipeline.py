@@ -20,7 +20,7 @@ import processing  # noqa: E402  (src/)
 import siglip      # noqa: E402
 
 IMAGES = ["c02", "c09", "c26", "c19"]
-PROMPTS = ["caption tr", "caption en", "ocr", "answer tr Tabelada ne yazıyor?", "detect sign"]
+PROMPTS = ["caption en", "caption tr", "ocr", "answer tr Tabelada ne yazıyor?", "detect sign"]
 SIGLIP_ID = "google/siglip-base-patch16-224"
 ATTN_LAYERS = [0, 5, 11]          # layers whose per-head attention is stored
 

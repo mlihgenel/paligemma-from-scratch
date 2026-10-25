@@ -5,6 +5,5 @@ safetensors
 sentencepiece
 pillow
 numpy
-matplotlib
 jupyter
 protobuf

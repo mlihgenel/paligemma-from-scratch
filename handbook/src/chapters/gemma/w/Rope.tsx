@@ -48,7 +48,7 @@ export function RopeDial() {
       </svg>
       <div style={{ fontFamily: "var(--sans)", fontSize: 14 }}>
         <div style={{ marginBottom: 8 }}><Seg value={pair} onChange={setPair} options={pairs} /></div>
-        <label className="small">q'nun konumu m <b className="mono">{m}</b>
+        <label className="small">{tr("position m of q", "q'nun konumu m")} <b className="mono">{m}</b>
           <input aria-label="m" type="range" min={0} max={40} value={m} onChange={(e) => setM(+e.target.value)} style={{ width: "100%" }} /></label>
         <label className="small">{tr("position n of k", "k'nın konumu n")} <b className="mono">{n}</b>
           <input aria-label="n" type="range" min={0} max={40} value={n} onChange={(e) => setN(+e.target.value)} style={{ width: "100%" }} /></label>

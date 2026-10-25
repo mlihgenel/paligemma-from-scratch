@@ -212,7 +212,7 @@ export function FlattenScene({ step }: { step: number }) {
   );
 }
 
-/* ---------------- konum embedding'i ---------------- */
+/* ---------------- position embedding ---------------- */
 export function PosEmbedExplorer() {
   const tr = useT();
   const { data, error } = useData<any>("pg_slices");
