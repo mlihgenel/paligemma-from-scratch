@@ -10,16 +10,16 @@ import os
 import numpy as np
 from manim import *
 
-# Kitabın açık tema tokenları (src/styles/tokens.css) ile aynı
+# Same as the book's light theme tokens (src/styles/tokens.css)
 BG = "#f4f2ed"
 INK = "#1b1b1f"
-C_T = "#2a78d6"     # akış / token (eksen T)
-C_D = "#eb6834"     # gizli boyut (eksen D)
-C_I = "#6250d6"     # MLP ara boyutu (eksen I)
-C_V = "#1baf7a"     # sözlük (eksen V)
-C_N = "#d4558a"     # norm (eksen hd rengi)
-C_A = "#3d4bd1"     # vurgu (indigo)
-C_F = "#9a968d"     # soluk
+C_T = "#2a78d6"     # stream / token (axis T)
+C_D = "#eb6834"     # hidden dim (axis D)
+C_I = "#6250d6"     # MLP intermediate dim (axis I)
+C_V = "#1baf7a"     # vocabulary (axis V)
+C_N = "#d4558a"     # norm (axis hd color)
+C_A = "#3d4bd1"     # accent (indigo)
+C_F = "#9a968d"     # faded
 FONT = "Inter"
 
 config.background_color = BG
@@ -38,7 +38,7 @@ def T(s, size=28, color=INK, **kw):
 
 
 def bars(values, color=C_T, width=0.18, scale=0.5, gap=0.05):
-    """Bir vektörü dikey çubuklarla göster (sıfır çizgisi ortada)."""
+    """Show a vector as vertical bars (zero line in the middle)."""
     g = VGroup()
     for i, v in enumerate(values):
         h = max(abs(v) * scale, 0.02)
@@ -73,7 +73,7 @@ class ResidualHighway(Scene):
         xs = [-3.2, 0.2, 3.6]
         names = ["1. attn", "1. mlp", "2. attn"]
         for k, (x, name) in enumerate(zip(xs, names)):
-            # akış boyunca ilerle
+            # move along the stream
             self.play(vec.animate.move_to([x - 1.4, vec.get_center()[1], 0]), run_time=0.8)
             norm_box = RoundedRectangle(width=1.2, height=0.7, corner_radius=0.12, color=C_N).move_to([x - 0.2, 1.7, 0])
             f_box = RoundedRectangle(width=1.2, height=0.7, corner_radius=0.12, color=C_D if "mlp" in name else C_F).move_to([x + 1.3, 1.7, 0])
@@ -82,7 +82,7 @@ class ResidualHighway(Scene):
             up = CurvedArrow(vec.get_top() + UP * 0.05, norm_box.get_bottom(), angle=-PI / 4, color=C_F, stroke_width=3)
             self.play(Create(norm_box), Create(f_box), FadeIn(nl), FadeIn(fl), Create(up), run_time=0.7)
 
-            # dal: norm'lu kopya (akış değişmeden duruyor)
+            # branch: a normalized copy (the stream stays unchanged)
             copy = vec.copy()
             self.play(copy.animate.scale(0.6).move_to(norm_box.get_center() + DOWN * 0.95), run_time=0.6)
             normed = bars(h / rms(h), C_N, scale=0.28).move_to(copy)
@@ -90,11 +90,11 @@ class ResidualHighway(Scene):
             note = T(tl('independent of scale: rms = 1', 'ölçekten bağımsız: rms = 1'), 18, C_N).next_to(norm_box, UP, buff=0.15)
             if k == 0:
                 self.play(FadeIn(note))
-            # f uygulanıyor
+            # f is applied
             u = rng.normal(size=10) * 0.8
             upd = bars(u, C_D if "mlp" in name else C_F, scale=0.45).scale(0.6).move_to(f_box.get_center() + DOWN * 0.95)
             self.play(ReplacementTransform(copy, upd), run_time=0.6)
-            # akışa ekle
+            # add to the stream
             plus = MathTex(r"\oplus", color=C_A).scale(1.2).move_to([x + 2.1, lane.get_center()[1], 0])
             down = CurvedArrow(f_box.get_bottom(), plus.get_top(), angle=-PI / 4, color=C_A, stroke_width=3)
             self.play(Create(down), FadeIn(plus), run_time=0.5)
@@ -140,7 +140,7 @@ class RMSNormGeometry(Scene):
         self.play(Transform(lbl, T(tl('(1+w): a separate scale per axis → ellipse', '(1+w): her eksen ayrı ölçek → elips'), 20, C_N).to_edge(DOWN, buff=0.75)))
         self.wait(0.8)
 
-        # LayerNorm karşılaştırması
+        # LayerNorm comparison
         self.play(FadeOut(f1), FadeOut(f2), FadeOut(circ), *[d.animate.move_to(ax.c2p(*p)).set_color(C_F) for d, p in zip(dots, P)], run_time=1.2)
         line = ax.plot(lambda x: -x, x_range=[-3, 3], color=C_A, stroke_width=2)
         f3 = T(tl('LayerNorm: subtract the mean first → the line x₀ + x₁ = 0', 'LayerNorm: önce ortalamayı çıkar → x₀ + x₁ = 0 doğrusu'), 20, C_A).to_edge(DOWN, buff=0.75)
@@ -173,7 +173,7 @@ class GeGLUGating(Scene):
         ul = T("up_proj → [16384]", 18, C_D).next_to(ub, DOWN, buff=0.2)
         self.play(TransformFromCopy(xb, gb), TransformFromCopy(xb, ub), FadeIn(gl), FadeIn(ul), run_time=1.2)
 
-        # GELU eğrisi
+        # the GELU curve
         ax = Axes(x_range=[-3, 3, 1], y_range=[-0.5, 3, 1], x_length=2.6, y_length=1.8, axis_config={"color": C_F, "stroke_width": 1.5}).move_to([1.2, 1.6, 0])
         gelu = lambda t: 0.5 * t * (1 + np.tanh(np.sqrt(2 / np.pi) * (t + 0.044715 * t ** 3)))
         curve = ax.plot(gelu, color=C_A)
@@ -188,7 +188,7 @@ class GeGLUGating(Scene):
         kl = T(tl('≈ 0: gate closed', '≈ 0: kapı kapalı'), 16, C_F).next_to(ab, DOWN, buff=0.15)
         self.play(FadeIn(kl))
 
-        # çarpım
+        # product
         times = MathTex(r"\odot", color=INK).scale(1.2).move_to([3.9, 0, 0])
         ub2 = ub.copy()
         self.play(ub2.animate.move_to([3.9, -1.6, 0]), FadeIn(times))
@@ -217,7 +217,7 @@ class WeightTying(Scene):
         dl = T("D = 2048", 18, C_F).next_to(cells, DOWN, buff=0.2)
         self.play(FadeIn(cells), FadeIn(name), FadeIn(vl), FadeIn(dl))
 
-        # Giriş: lookup
+        # Input: lookup
         sub = T(tl('Input: id → pick a row (no math)', 'Girişte: id → satır seç (hesap yok)'), 22, C_T).to_edge(DOWN, buff=0.4)
         self.play(FadeIn(sub))
         idt = T("id = 4", 22, C_A).move_to([-5, cells[4].get_center()[1], 0])
@@ -229,7 +229,7 @@ class WeightTying(Scene):
         self.wait(0.8)
         self.play(FadeOut(row), FadeOut(rl), FadeOut(idt), cells[4].animate.set_stroke(BG, width=1), FadeOut(sub))
 
-        # Çıkış: h @ W.T
+        # Output: h @ W.T
         sub2 = T(tl('Output: norm(h) dot every row → logits', 'Çıkışta: norm(h) her satırla nokta çarpımı → logit'), 22, C_D).to_edge(DOWN, buff=0.4)
         self.play(FadeIn(sub2))
         h = rng.normal(size=D)
@@ -259,7 +259,7 @@ def grid_cell(color, size=0.5, opacity=0.9):
 
 
 class ConvAsPatchLinear(Scene):
-    """Conv2d(kernel = stride) = görüntüyü yamalara bölüp her yamaya aynı linear katmanı uygulamak"""
+    """Conv2d(kernel = stride) = cutting the image into patches and applying the same linear layer to each"""
     def construct(self):
         title = T(tl('Conv2d, kernel = stride: the same linear map for every patch', 'Conv2d, kernel = stride: her yamaya aynı linear'), 30).to_edge(UP, buff=0.4)
         self.play(FadeIn(title))
@@ -318,7 +318,7 @@ class FlattenTranspose(Scene):
         l1 = T(tl('[C, H, W] = [3, 2, 2] · each channel a map, numbers are patch positions', '[C, H, W] = [3, 2, 2] · her kanal bir harita, sayılar yama konumu'), 19, C_F).next_to(maps, DOWN, buff=0.4)
         self.play(FadeIn(maps), FadeIn(l1))
         self.wait(0.6)
-        # flatten: her kanal bir satır
+        # flatten: each channel becomes a row
         for c in range(C):
             for r in range(H):
                 for w in range(W):
@@ -348,7 +348,7 @@ class FlattenTranspose(Scene):
 
 
 class MultiHeadReshape(Scene):
-    """[T, D] → view [T, H, hd] → transpose [H, T, hd]: her head kendi bloğunda"""
+    """[T, D] → view [T, H, hd] → transpose [H, T, hd]: each head in its own block"""
     def construct(self):
         title = T("Multi-head: view ve transpose", 30).to_edge(UP, buff=0.4)
         self.play(FadeIn(title))
@@ -364,12 +364,12 @@ class MultiHeadReshape(Scene):
         l = T("q_proj(x): [T, D] = [3, 6]", 20, C_F).move_to([0, -1.2, 0])
         self.play(FadeIn(l))
         self.wait(0.5)
-        # view: D'yi H × hd olarak ayır (araya boşluk)
+        # view: split D into H × hd (with a gap)
         anims = [c.animate.move_to([-1.8 + (d // hd) * 2.1 + (d % hd) * 0.6, 1.2 - t * 0.6, 0]) for (t, d), c in cells.items()]
         l2 = T(tl('view(B, T, H, hd): [3, 2, 3] · same memory, just read differently', 'view(B, T, H, hd): [3, 2, 3] · bellek aynı, sadece okunuş'), 20, C_F).move_to(l)
         self.play(*anims, Transform(l, l2), run_time=1.4)
         self.wait(0.5)
-        # transpose: head'ler ayrı bloklara
+        # transpose: the heads move into separate blocks
         anims = [c.animate.move_to([-3.2 + (d // hd) * 4.0 + (d % hd) * 0.6, 1.2 - t * 0.6, 0]) for (t, d), c in cells.items()]
         l3 = T(tl('transpose(1, 2): [H, T, hd] = [2, 3, 3] · each head its own T × hd matrix', 'transpose(1, 2): [H, T, hd] = [2, 3, 3] · her head kendi T × hd matrisi'), 20, C_A).move_to(l)
         self.play(*anims, Transform(l, l3), run_time=1.4)
