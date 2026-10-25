@@ -1,11 +1,11 @@
-"""Görüntü + prompt hattının ara değerleri: senin processing.py ve siglip.py'n ile.
+"""Intermediate values of the image + prompt pipeline, using the project's processing.py and siglip.py.
 
-- processing.process_images ve PaliGemmaProcessor (tokenizer: google/paligemma-3b-pt-224, cache'te)
-- siglip.SiglipVisionTransformer, google/siglip-base-patch16-224 ağırlıklarıyla (cache'te, 16 px yama,
-  196 token). PaliGemma'nın kendi kodlayıcısı so400m (14 px, 256 token); onun konum embedding'i ve
-  filtreleri fetch_paligemma_slices.py'den geliyor.
+- processing.process_images and PaliGemmaProcessor (tokenizer: google/paligemma-3b-pt-224, from the cache)
+- siglip.SiglipVisionTransformer with the google/siglip-base-patch16-224 weights (from the cache, 16 px patches,
+  196 tokens). PaliGemma's own encoder is so400m (14 px, 256 tokens); its position embedding and
+  filters come from fetch_paligemma_slices.py.
 
-Çalıştır: .venv/bin/python handbook/export/export_pipeline.py
+Run: .venv/bin/python handbook/export/export_pipeline.py
 """
 import dataclasses
 import shutil
@@ -22,7 +22,7 @@ import siglip      # noqa: E402
 IMAGES = ["c02", "c09", "c26", "c19"]
 PROMPTS = ["caption tr", "caption en", "ocr", "answer tr Tabelada ne yazıyor?", "detect sign"]
 SIGLIP_ID = "google/siglip-base-patch16-224"
-ATTN_LAYERS = [0, 5, 11]          # head bazında saklanacak katmanlar
+ATTN_LAYERS = [0, 5, 11]          # layers whose per-head attention is stored
 
 
 def hist(a, lo, hi, bins=64):
@@ -46,7 +46,7 @@ def load_siglip():
 
 
 def tokenize_prompts(tok, proc):
-    """PaliGemmaProcessor (senin) ile prompt'ları diziye çevir. Görüntü token'ları tek blok olarak özetlenir."""
+    """Turn the prompts into sequences with the project's PaliGemmaProcessor. Image tokens are summarized as one block."""
     out = []
     dummy = Image.new("RGB", (224, 224))
     for p in PROMPTS:
@@ -94,7 +94,7 @@ def main():
         thumb.thumbnail((640, 640))
         thumb.save(OUT / f"img_{name}.jpg", quality=88)
 
-        # Senin process_images adımları, ara sonuçlarıyla
+        # The steps of process_images, with their intermediate results
         resized = processing.resize(img, (224, 224), resample=Image.Resampling.BICUBIC)
         resized.save(OUT / f"img_{name}_224.png")
         u8 = np.array(resized)                                           # [224, 224, 3] uint8
@@ -114,7 +114,7 @@ def main():
             "pixel_values": w.arr(pv, "f16"),                            # [3, 224, 224]
         }
 
-        # SigLIP: hook'larla her katmanın girişi, layer_norm1 çıktısı (attention'ı yeniden hesaplamak için)
+        # SigLIP: hooks capture each layer's input and layer_norm1 output (to recompute attention)
         x = torch.from_numpy(pv)[None]
         cap = {"ln1": [], "out": []}
         hooks = []
@@ -130,7 +130,7 @@ def main():
         assert patch_only.shape == (1, cfg.hidden_size, n_side, n_side)
         assert last.shape == (1, n_side * n_side, cfg.hidden_size)
 
-        # Senin SiglipAttention'ının içindeki softmax(QK^T * scale): q_proj/k_proj ile yeniden hesap
+        # softmax(QK^T * scale) from inside SiglipAttention, recomputed with q_proj/k_proj
         attn_mean, attn_heads = [], []
         with torch.no_grad():
             for li, (layer, h_in) in enumerate(zip(model.encoder.layers, cap["ln1"])):
@@ -141,7 +141,7 @@ def main():
                 if li in ATTN_LAYERS:
                     attn_heads.append(a.numpy())
 
-        # Yama embedding'lerinin PCA'sı -> RGB (ilk 3 bileşen)
+        # PCA of the patch embeddings -> RGB (first 3 components)
         def pca_rgb(t):
             z = t[0].numpy()
             z = z - z.mean(0)
@@ -164,7 +164,7 @@ def main():
         doc["images"].append(entry)
         print(f"{name}: tamam")
 
-    # Konum embedding'leri (siglip-base) kosinüs benzerliği [196, 196]
+    # Cosine similarity of the position embeddings (siglip-base) [196, 196]
     pe = model.embeddings.position_embedding.weight.detach().numpy()
     pe = pe / np.linalg.norm(pe, axis=1, keepdims=True)
     doc["base_pos_cos"] = w.arr(pe @ pe.T, "f16")

@@ -1,25 +1,24 @@
-"""Gemma parçaları HF ile aynı çıktıyı veriyor mu?
+"""Do the Gemma parts give the same output as HF?
 
-Parçalar küçükten büyüğe test edilir. src/gemma.py'de henüz yazılmamış sınıflar atlanır,
-yani her yeni sınıfı yazdıkça script'i yeniden çalıştırabilirsin:
+Parts are tested from small to large:
 
-    GemmaRMSNorm       -> HF GemmaRMSNorm (float32 ve bfloat16 girdiyle)
+    GemmaRMSNorm       -> HF GemmaRMSNorm (float32 and bfloat16 input)
     GemmaMLP           -> HF GemmaMLP
-    GemmaRotaryEmbedding -> HF GemmaRotaryEmbedding + apply_rotary_pos_emb (cos/sin ve döndürülmüş Q/K)
-    repeat_kv          -> HF repeat_kv (MQA ve n_kv > 1 olan GQA durumları)
-    KVCache            -> HF DynamicCache (prefill + token token ekleme, uzunluk)
-    GemmaAttention     -> HF GemmaAttention (eager, nedensel maskeli ve maskesiz; cache'le prefill + token token)
-    GemmaDecoderLayer  -> HF GemmaDecoderLayer (attention + MLP + iki norm, nedensel maskeyle)
-    GemmaModel         -> HF GemmaModel (embedding ölçeği + RoPE + nedensel maske + bütün katmanlar + son norm;
-                          cache'le prefill + token token, konum ve maske cache uzunluğundan)
-    GemmaForCausalLM   -> HF GemmaForCausalLM (logit'ler ve weight tying)
+    GemmaRotaryEmbedding -> HF GemmaRotaryEmbedding + apply_rotary_pos_emb (cos/sin and rotated Q/K)
+    repeat_kv          -> HF repeat_kv (MQA and GQA with n_kv > 1)
+    KVCache            -> HF DynamicCache (prefill + token-by-token appends, length)
+    GemmaAttention     -> HF GemmaAttention (eager, with and without a causal mask; cached prefill + token by token)
+    GemmaDecoderLayer  -> HF GemmaDecoderLayer (attention + MLP + two norms, causal mask)
+    GemmaModel         -> HF GemmaModel (embedding scale + RoPE + causal mask + all layers + final norm;
+                          cached prefill + token by token, position and mask from the cache length)
+    GemmaForCausalLM   -> HF GemmaForCausalLM (logits and weight tying)
 
-Çalıştır (proje kökünden):
+Run (from the project root):
     .venv/bin/python checks/check_gemma.py
 
-Hiçbir şey indirilmez: HF modülleri küçük bir config ve rastgele ağırlıklarla kurulur, ağırlıklar
-bizim modüllere kopyalanır ve aynı girdiyle karşılaştırılır. Gerçek ağırlıklarla test tam model
-kurulunca (Colab) yapılacak.
+Nothing is downloaded: the HF modules are built from a small config with random weights, the weights
+are copied into our modules and both are compared on the same input. The test with the real weights
+is in the Colab notebook.
 """
 import sys
 from pathlib import Path
@@ -40,7 +39,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 import gemma  # noqa: E402
 
-# Küçük config: gerçek Gemma 2B'de hidden 2048, intermediate 16384. Mantık aynı, yerelde hızlı
+# Small config: the real Gemma 2B has hidden 2048, intermediate 16384. Same logic, fast locally
 SMALL = dict(
     vocab_size=128,
     hidden_size=64,
@@ -63,18 +62,18 @@ def compare(name, ours, theirs, exact=False):
         ok = same_shape and same_dtype and torch.equal(ours, theirs)
     else:
         ok = same_shape and same_dtype and torch.allclose(ours, theirs, atol=ATOL)
-    print(f"[{'OK ' if ok else 'HATA'}] {name}: bizim {tuple(ours.shape)} {ours.dtype}, "
-          f"HF {tuple(theirs.shape)} {theirs.dtype}, max fark {max_diff:.2e}")
+    print(f"[{'OK ' if ok else 'FAIL'}] {name}: ours {tuple(ours.shape)} {ours.dtype}, "
+          f"HF {tuple(theirs.shape)} {theirs.dtype}, max diff {max_diff:.2e}")
     return ok
 
 
 def copy_weights(name, ours, hf):
-    """Anahtarları karşılaştır, tutuyorsa HF ağırlıklarını bizim modüle kopyala."""
+    """Compare the keys and, if they match, copy the HF weights into our module."""
     ours_keys, hf_keys = set(ours.state_dict()), set(hf.state_dict())
     if ours_keys != hf_keys:
-        print(f"[HATA] {name}: state_dict anahtarları tutmuyor")
-        print(f"   bizde olup HF'de olmayan: {sorted(ours_keys - hf_keys)}")
-        print(f"   HF'de olup bizde olmayan: {sorted(hf_keys - ours_keys)}")
+        print(f"[FAIL] {name}: state_dict keys do not match")
+        print(f"   in ours but not in HF: {sorted(ours_keys - hf_keys)}")
+        print(f"   in HF but not in ours: {sorted(hf_keys - ours_keys)}")
         return False
     ours.load_state_dict(hf.state_dict())
     return True
@@ -82,24 +81,24 @@ def copy_weights(name, ours, hf):
 
 def check_rmsnorm():
     hf = HFGemmaRMSNorm(SMALL["hidden_size"], eps=EPS).eval()
-    # Ağırlık sıfırla başlıyor. Sıfır kalırsa ölçek her iki tarafta da 1 olur ve weight'i yanlış
-    # kullanan (ya da hiç kullanmayan) bir kod da testi geçer. Bu yüzden rastgele dolduruyoruz.
+    # The weight starts at zero. Left at zero, the scale is 1 on both sides and code that uses
+    # the weight wrongly (or not at all) would still pass. So we fill it with random values.
     with torch.no_grad():
         hf.weight.normal_()
     ours = gemma.GemmaRMSNorm(SMALL["hidden_size"], eps=EPS).eval()
     if not copy_weights("GemmaRMSNorm", ours, hf):
         return False
 
-    # Gemma'da embedding'ler sqrt(hidden_size) ile çarpıldığı için girdiler büyük olabiliyor
+    # Inputs can be large because Gemma multiplies embeddings by sqrt(hidden_size)
     x = torch.randn(B, T, SMALL["hidden_size"]) * 40
     with torch.no_grad():
         ok32 = compare("GemmaRMSNorm float32", ours(x), hf(x))
 
-        # Model bf16'da çalışacak. İşlem sırası HF ile aynıysa sonuç bit bit aynı olmalı.
-        # Llama sırasıyla (önce bf16'ya dön, sonra çarp) yazılmışsa burada küçük bir fark çıkar.
+        # The model runs in bf16. With the same order of operations as HF the result must be bit-exact.
+        # Written in Llama order (cast to bf16 first, then multiply) a small difference shows up here.
         ours.to(torch.bfloat16), hf.to(torch.bfloat16)
         x16 = x.to(torch.bfloat16)
-        ok16 = compare("GemmaRMSNorm bfloat16 (birebir)", ours(x16), hf(x16), exact=True)
+        ok16 = compare("GemmaRMSNorm bfloat16 (bit-exact)", ours(x16), hf(x16), exact=True)
     return ok32 and ok16
 
 
@@ -119,10 +118,10 @@ def check_rope():
     hf_config = HFGemmaConfig(**SMALL, hidden_act="gelu_pytorch_tanh")
     hf = HFGemmaRotaryEmbedding(hf_config)
     ours = gemma.GemmaRotaryEmbedding(SMALL["head_dim"], base=hf_config.rope_parameters["rope_theta"])
-    # Buffer olduğu için copy_weights yok: frekansları kendimiz hesaplıyoruz, aynı çıkmalı
+    # A buffer, so no copy_weights: we compute the frequencies ourselves and they must match
     ok_freq = compare("RoPE inv_freq", ours.inv_freq, hf.inv_freq)
 
-    # Konumlar 0'dan başlamak zorunda değil (KV cache'te üretilen token 260. konumda olacak)
+    # Positions need not start at 0 (with a KV cache a generated token sits at position 260 or later)
     position_ids = torch.arange(T).unsqueeze(0).expand(B, -1) + torch.tensor([[0], [300]])
     q = torch.randn(B, SMALL["num_attention_heads"], T, SMALL["head_dim"])
     k = torch.randn(B, SMALL["num_key_value_heads"], T, SMALL["head_dim"])
@@ -132,27 +131,27 @@ def check_rope():
 
     q_ours, k_ours = gemma.apply_rotary_pos_emb(q, k, cos, sin)
     q_hf, k_hf = hf_apply_rotary_pos_emb(q, k, hf_cos, hf_sin)
-    ok_qk = compare("RoPE döndürülmüş Q", q_ours, q_hf) & compare("RoPE döndürülmüş K", k_ours, k_hf)
+    ok_qk = compare("RoPE rotated Q", q_ours, q_hf) & compare("RoPE rotated K", k_ours, k_hf)
 
-    # Döndürme vektörün uzunluğunu değiştirmemeli: sadece yön değişiyor
+    # Rotation must not change a vector's length, only its direction
     norm_kept = torch.allclose(q_ours.norm(dim=-1), q.norm(dim=-1), atol=ATOL)
-    print(f"[{'OK ' if norm_kept else 'HATA'}] RoPE vektör uzunluğu korunuyor")
+    print(f"[{'OK ' if norm_kept else 'FAIL'}] RoPE keeps vector lengths")
     return bool(ok_freq and ok_cs and ok_qk and norm_kept)
 
 
 def check_repeat_kv():
     n_heads = SMALL["num_attention_heads"]
     ok = True
-    # 1: Gemma 2B gibi MQA. 2: GQA (n_kv > 1, gruplama sırası burada belli olur). 4: n_rep = 1, hiçbir şey değişmemeli
+    # 1: MQA like Gemma 2B. 2: GQA (n_kv > 1, where the grouping order shows). 4: n_rep = 1, nothing should change
     for n_kv in (1, 2, 4):
         n_rep = n_heads // n_kv
         x = torch.randn(B, n_kv, T, SMALL["head_dim"])
         ours, theirs = gemma.repeat_kv(x, n_rep), hf_repeat_kv(x, n_rep)
         ok &= compare(f"repeat_kv n_kv={n_kv}, n_rep={n_rep}", ours, theirs, exact=True)
 
-        # Q head'i h, KV head'i h // n_rep'i kullanmalı (gruplar komşu head'lerden oluşuyor)
+        # Q head h must use KV head h // n_rep (groups are made of neighboring heads)
         grouped = all(torch.equal(ours[:, h], x[:, h // n_rep]) for h in range(n_heads))
-        print(f"[{'OK ' if grouped else 'HATA'}] repeat_kv n_kv={n_kv}: Q head h -> KV head h // n_rep")
+        print(f"[{'OK ' if grouped else 'FAIL'}] repeat_kv n_kv={n_kv}: Q head h -> KV head h // n_rep")
         ok &= grouped
     return bool(ok)
 
@@ -161,27 +160,27 @@ def check_kv_cache():
     n_kv, hd, n_layers = SMALL["num_key_value_heads"], SMALL["head_dim"], SMALL["num_hidden_layers"]
     ours, theirs = gemma.KVCache(), DynamicCache()
     ok = ours.get_seq_length() == 0
-    print(f"[{'OK ' if ok else 'HATA'}] KVCache boşken uzunluk 0")
-    # Önce prefill (T token), sonra 3 adım token token üretim. Her adımda bütün katmanlar güncelleniyor
+    print(f"[{'OK ' if ok else 'FAIL'}] KVCache length is 0 when empty")
+    # Prefill first (T tokens), then 3 token-by-token steps. Every step updates all layers
     for step, t_new in enumerate((T, 1, 1, 1)):
         for layer in range(n_layers):
             k, v = torch.randn(B, n_kv, t_new, hd), torch.randn(B, n_kv, t_new, hd)
             ok_k, ok_v = ours.update(k, v, layer)
             hf_k, hf_v = theirs.update(k, v, layer)
             if layer == n_layers - 1:
-                ok &= compare(f"KVCache adım {step} (T_yeni={t_new}) K, katman {layer}", ok_k, hf_k, exact=True)
-                ok &= compare(f"KVCache adım {step} (T_yeni={t_new}) V, katman {layer}", ok_v, hf_v, exact=True)
+                ok &= compare(f"KVCache step {step} (T_new={t_new}) K, layer {layer}", ok_k, hf_k, exact=True)
+                ok &= compare(f"KVCache step {step} (T_new={t_new}) V, layer {layer}", ok_v, hf_v, exact=True)
             else:
                 ok &= torch.equal(ok_k, hf_k) and torch.equal(ok_v, hf_v)
     same_len = ours.get_seq_length() == theirs.get_seq_length() == T + 3
-    print(f"[{'OK ' if same_len else 'HATA'}] KVCache uzunluk: bizim {ours.get_seq_length()}, "
-          f"HF {theirs.get_seq_length()}, beklenen {T + 3}")
+    print(f"[{'OK ' if same_len else 'FAIL'}] KVCache length: ours {ours.get_seq_length()}, "
+          f"HF {theirs.get_seq_length()}, expected {T + 3}")
     return bool(ok and same_len)
 
 
 def check_attention():
     hf_config = HFGemmaConfig(**SMALL, hidden_act="gelu_pytorch_tanh")
-    hf_config._attn_implementation = "eager"      # sdpa/flash kernel'leri değil, yukarıda yazılan matematiğin kendisi
+    hf_config._attn_implementation = "eager"      # not the sdpa/flash kernels, but the plain math
     hf = HFGemmaAttention(hf_config, layer_idx=0).eval()
     ours = gemma.GemmaAttention(gemma.GemmaConfig(**SMALL), layer_idx=0).eval()
     if not copy_weights("GemmaAttention", ours, hf):
@@ -192,44 +191,44 @@ def check_attention():
     position_ids = torch.arange(T).unsqueeze(0).expand(B, -1)
     cos, sin = hf_rope(x, position_ids)
 
-    # Nedensel maske: token i sadece j <= i olanlara bakabilir. Toplanan biçim: izinli 0, yasak -inf
+    # Causal mask: token i may only look at j <= i. Additive form: allowed 0, blocked -inf
     mask = torch.full((T, T), float("-inf")).triu(diagonal=1)[None, None].expand(B, 1, T, T)
 
     with torch.no_grad():
-        ok_mask = compare("GemmaAttention (nedensel maske)",
+        ok_mask = compare("GemmaAttention (causal mask)",
                           ours(x, (cos, sin), mask), hf(x, (cos, sin), mask)[0])
-        ok_nomask = compare("GemmaAttention (maskesiz)", ours(x, (cos, sin)), hf(x, (cos, sin), None)[0])
+        ok_nomask = compare("GemmaAttention (no mask)", ours(x, (cos, sin)), hf(x, (cos, sin), None)[0])
 
-        # Nedensel maske gerçekten işe yarıyor mu: gelecekteki token'ı değiştirmek geçmiş çıktıyı etkilememeli
+        # Does the causal mask work: changing a future token must not affect earlier outputs
         x2 = x.clone()
         x2[:, -1] += 10.0
         out1, out2 = ours(x, (cos, sin), mask), ours(x2, (cos, sin), mask)
         causal = torch.allclose(out1[:, :-1], out2[:, :-1], atol=ATOL) and not torch.allclose(out1[:, -1], out2[:, -1])
-        print(f"[{'OK ' if causal else 'HATA'}] GemmaAttention: son token değişince önceki çıktılar aynı kalıyor")
+        print(f"[{'OK ' if causal else 'FAIL'}] GemmaAttention: changing the last token leaves earlier outputs unchanged")
 
         ok_cache = True
         if hasattr(gemma, "KVCache"):
-            # Cache'le: ilk T-3 token prefill (nedensel maske), kalan 3 token tek tek. Tek token'ın maskesi tamamen 0:
-            # geçmişin hepsine bakabilir, gelecek zaten cache'te yok. Konumu (RoPE) cache uzunluğu belirliyor
+            # With a cache: the first T-3 tokens are the prefill (causal mask), the last 3 go one by one. A single token's
+            # mask is all zeros: it may look at the whole past, and the future is not in the cache anyway
             ours_cache, hf_cache = gemma.KVCache(), DynamicCache()
             P = T - 3
             outs = []
             for start, end in [(0, P)] + [(t, t + 1) for t in range(P, T)]:
-                step_mask = mask[:, :, start:end, :end]                 # [B, 1, T_yeni, T_top]
+                step_mask = mask[:, :, start:end, :end]                 # [B, 1, T_new, T_all]
                 cs = (cos[:, start:end], sin[:, start:end])
                 o = ours(x[:, start:end], cs, step_mask, kv_cache=ours_cache)
                 h = hf(x[:, start:end], cs, step_mask, past_key_values=hf_cache)[0]
-                ok_cache &= compare(f"GemmaAttention cache'li, token {start}..{end - 1}", o, h)
+                ok_cache &= compare(f"GemmaAttention cached, tokens {start}..{end - 1}", o, h)
                 outs.append(o)
-            # Asıl iddia: cache'li adımları birleştirince tam diziyi tek seferde işlemekle aynı sonuç
-            ok_cache &= compare("GemmaAttention cache'li adımlar = cache'siz tam dizi",
+            # The real claim: the cached steps joined together equal the full sequence processed at once
+            ok_cache &= compare("GemmaAttention cached steps = uncached full sequence",
                                 torch.cat(outs, dim=1), ours(x, (cos, sin), mask))
     return bool(ok_mask and ok_nomask and causal and ok_cache)
 
 
 def hf_eager_config():
     cfg = HFGemmaConfig(**SMALL, hidden_act="gelu_pytorch_tanh")
-    cfg._attn_implementation = "eager"      # sdpa/flash kernel'leri değil, bizim yazdığımız matematiğin kendisi
+    cfg._attn_implementation = "eager"      # not the sdpa/flash kernels, but the same math we wrote
     return cfg
 
 
@@ -238,8 +237,8 @@ def check_decoder_layer():
     hf = HFGemmaDecoderLayer(hf_config, layer_idx=0).eval()
     ours = gemma.GemmaDecoderLayer(gemma.GemmaConfig(**SMALL), layer_idx=0).eval()
 
-    # Norm ağırlıklarını rastgele yap. Sıfır kalırsa iki norm aynı davranır ve
-    # input_layernorm ile post_attention_layernorm'u karıştıran bir kod da testi geçer
+    # Randomize the norm weights. Left at zero, both norms behave the same and code that
+    # swaps input_layernorm and post_attention_layernorm would still pass
     with torch.no_grad():
         hf.input_layernorm.weight.normal_()
         hf.post_attention_layernorm.weight.normal_()
@@ -256,7 +255,7 @@ def check_decoder_layer():
 
 
 def randomize_norms(module):
-    """Bütün RMSNorm ağırlıklarını rastgele yap (sıfır kalırsa hepsi aynı davranır)."""
+    """Randomize all RMSNorm weights (left at zero, they all behave the same)."""
     with torch.no_grad():
         for n, p in module.named_parameters():
             if "norm" in n:
@@ -264,21 +263,21 @@ def randomize_norms(module):
 
 
 def scaled_embeds(ours_model):
-    """HF modeline vereceğimiz, ölçeği zaten uygulanmış embedding'ler.
+    """Embeddings for the HF model with the scale already applied.
 
-    Kurulu HF sürümü (transformers 5.x) sqrt(hidden_size) ölçeğini embedding tablosunun içinde
-    (GemmaTextScaledWordEmbedding) uyguluyor ve inputs_embeds verilirse ölçeklemiyor. Bizim
-    GemmaModel ise ölçeği forward'ın başında, inputs_embeds üzerinde uyguluyor (Umar / eski HF yöntemi).
-    Aynı şeyi karşılaştırmak için: bizim modele ham embedding, HF'ye sqrt(d) ile çarpılmış hali veriliyor.
+    transformers 5.x applies the sqrt(hidden_size) scale inside the embedding table
+    (GemmaTextScaledWordEmbedding) and does not scale inputs_embeds passed in directly. Our
+    GemmaModel applies the scale at the start of forward, on inputs_embeds (the older HF approach).
+    To compare like with like: our model gets the raw embeddings, HF gets them multiplied by sqrt(d).
     """
     input_ids = torch.randint(0, SMALL["vocab_size"], (B, T))
-    raw = ours_model.embed_tokens(input_ids)                       # [B, T, D], ölçeksiz
+    raw = ours_model.embed_tokens(input_ids)                       # [B, T, D], unscaled
     return raw, raw * torch.tensor(SMALL["hidden_size"] ** 0.5, dtype=raw.dtype)
 
 
 def check_model():
     hf_config = hf_eager_config()
-    hf = HFGemmaForCausalLM(hf_config).model.eval()   # GemmaModel kısmı
+    hf = HFGemmaForCausalLM(hf_config).model.eval()   # the GemmaModel part
     ours = gemma.GemmaModel(gemma.GemmaConfig(**SMALL)).eval()
     randomize_norms(hf)
     if not copy_weights("GemmaModel", ours, hf):
@@ -289,21 +288,21 @@ def check_model():
         ok = compare("GemmaModel", ours(raw), hf(inputs_embeds=scaled).last_hidden_state)
 
         if hasattr(gemma, "KVCache"):
-            # Konum ve maske verilmiyor: ikisi de cache uzunluğundan çıkmalı. HF de aynısını kendi içinde yapıyor
+            # No position or mask passed: both must follow from the cache length. HF does the same internally
             ours_cache, hf_cache = gemma.KVCache(), DynamicCache()
             P = T - 3
             outs = []
             for start, end in [(0, P)] + [(t, t + 1) for t in range(P, T)]:
                 o = ours(raw[:, start:end], kv_cache=ours_cache)
                 h = hf(inputs_embeds=scaled[:, start:end], past_key_values=hf_cache, use_cache=True).last_hidden_state
-                ok &= compare(f"GemmaModel cache'li, token {start}..{end - 1}", o, h)
+                ok &= compare(f"GemmaModel cached, tokens {start}..{end - 1}", o, h)
                 outs.append(o)
-            ok &= compare("GemmaModel cache'li adımlar = cache'siz tam dizi", torch.cat(outs, dim=1), ours(raw))
+            ok &= compare("GemmaModel cached steps = uncached full sequence", torch.cat(outs, dim=1), ours(raw))
 
-            # Geçmiş varken birden fazla yeni token (past_len > 0, T > 1): maske dikdörtgen olmalı
+            # Several new tokens with a past (past_len > 0, T > 1): the mask must be rectangular
             rect = gemma.make_causal_mask(3, torch.float32, torch.device("cpu"), past_len=4)[0, 0]
             expected = gemma.make_causal_mask(7, torch.float32, torch.device("cpu"))[0, 0, 4:]
-            ok &= compare("make_causal_mask past_len=4, T=3 = kare maskenin son 3 satırı", rect, expected, exact=True)
+            ok &= compare("make_causal_mask past_len=4, T=3 = last 3 rows of the square mask", rect, expected, exact=True)
         return bool(ok)
 
 
@@ -311,19 +310,19 @@ def check_causal_lm():
     hf_config = hf_eager_config()
     hf = HFGemmaForCausalLM(hf_config).eval()
     ours = gemma.GemmaForCausalLM(gemma.GemmaConfig(**SMALL)).eval()
-    ours.tie_weights()   # bizde tying'i PaliGemma çağırıyor, burada elle
+    ours.tie_weights()   # in our code PaliGemma calls tying, here we do it by hand
     randomize_norms(hf)
     if not copy_weights("GemmaForCausalLM", ours, hf):
         return False
 
-    # load_state_dict değerleri kopyalar ama tying'i bozmaz: iki ad hâlâ aynı Parameter nesnesi olmalı
+    # load_state_dict copies values but keeps the tying: both names must still be the same Parameter object
     tied = ours.lm_head.weight is ours.model.embed_tokens.weight
-    print(f"[{'OK ' if tied else 'HATA'}] weight tying: lm_head.weight {'aynı' if tied else 'FARKLI'} "
-          f"Parameter nesnesi (embed_tokens.weight)")
+    print(f"[{'OK ' if tied else 'FAIL'}] weight tying: lm_head.weight is {'the same' if tied else 'a DIFFERENT'} "
+          f"Parameter object as embed_tokens.weight")
 
     with torch.no_grad():
         raw, scaled = scaled_embeds(ours.model)
-        ok = compare("GemmaForCausalLM logit'ler", ours(raw), hf(inputs_embeds=scaled).logits)
+        ok = compare("GemmaForCausalLM logits", ours(raw), hf(inputs_embeds=scaled).logits)
     return tied and ok
 
 
@@ -344,16 +343,16 @@ def main():
     results = []
     for cls_name, fn in checks:
         if not hasattr(gemma, cls_name):
-            print(f"[ -- ] {cls_name}: gemma.py'de henüz yok, atlandı")
+            print(f"[ -- ] {cls_name}: not in gemma.py, skipped")
             continue
         try:
             results.append(fn())
         except Exception as e:
-            print(f"[HATA] {cls_name}: {type(e).__name__}: {e}")
+            print(f"[FAIL] {cls_name}: {type(e).__name__}: {e}")
             results.append(False)
 
     ok = bool(results) and all(results)
-    print(f"\nSonuç: {'yazılan parçalar HF ile aynı ✅' if ok else 'fark var ❌'}")
+    print(f"\nResult: {'all parts match HF ✅' if ok else 'mismatch ❌'}")
     sys.exit(0 if ok else 1)
 
 

@@ -1,16 +1,16 @@
-"""Gemma deneyleri: senin gemma.py sınıflarınla, oyuncak boyutta.
+"""Gemma experiments with the classes in gemma.py, at toy size.
 
-Oyuncak config: hidden 256, intermediate 2048, 6 katman. Embedding'ler gerçek Gemma'nın eleman
-dağılımıyla (std ≈ 0.186), RMSNorm ağırlıkları gerçek checkpoint'in ilk 256 boyutundan
-(pg_slices.json), MLP ağırlıkları rastgele (std 0.02, HF initializer_range). Attention yerine
-rastgele bir linear stub: bu deneyler residual akışının davranışını ölçüyor, attention'ın değil.
-Gerçek GemmaAttention'ın deneyleri export_attention.py'de.
+Toy config: hidden 256, intermediate 2048, 6 layers. Embeddings follow the real Gemma's element
+distribution (std ≈ 0.186), RMSNorm weights come from the first 256 dims of the real checkpoint
+(pg_slices.json), MLP weights are random (std 0.02, HF initializer_range). Attention is replaced by
+a random linear stub: these experiments measure the residual stream, not attention.
+The experiments with the real GemmaAttention are in export_attention.py.
 
-"Ne bozulur?" deneyleri için katmanın forward'ı bazı varyantlarda burada yeniden yazılıyor ama
-alt modüller (norm'lar, MLP) her zaman senin sınıfların.
+For the "what breaks?" experiments some variants rewrite the layer's forward here, but
+the submodules (norms, MLP) are always the project's classes.
 
-Çalıştır: .venv/bin/python handbook/export/export_gemma_toy.py
-(önce fetch_paligemma_slices.py çalışmış olmalı)
+Run: .venv/bin/python handbook/export/export_gemma_toy.py
+(run fetch_paligemma_slices.py first)
 """
 import json
 
@@ -41,12 +41,12 @@ class Stub(nn.Module):
         self.proj = nn.Linear(d, d, bias=False)
         nn.init.normal_(self.proj.weight, std=0.02)
 
-    def forward(self, x, *args, **kwargs):   # katman artık (x, position_embeddings, attention_mask) geçiriyor
+    def forward(self, x, *args, **kwargs):   # the layer passes (x, position_embeddings, attention_mask)
         return self.proj(x)
 
 
 def layer_inputs(h):
-    """Katmanın attention'a geçirdiği ek girdiler. Stub kullanmıyor ama imza gerçek olsun diye veriyoruz."""
+    """The extra inputs the layer passes to attention. The stub ignores them, but the signature stays real."""
     B_, T_, _ = h.shape
     pe = gemma.GemmaRotaryEmbedding(TOY["head_dim"])(h, torch.arange(T_).unsqueeze(0).expand(B_, -1))
     return pe, gemma.make_causal_mask(T_, h.dtype, h.device)
@@ -55,9 +55,9 @@ def layer_inputs(h):
 def build_model(slices):
     torch.manual_seed(0)
     cfg = gemma.GemmaConfig(**TOY)
-    # Gerçek GemmaAttention'ın q/k/v/o başlangıç ağırlıkları rastgele sayı tüketir ve MLP'lerin
-    # başlangıcını kaydırırdı. Attention'sız sürümle aynı sayıları üretmek için kurulurken geçici
-    # olarak Identity koyuyoruz, sonra Stub'a değiştiriyoruz.
+    # Initializing the real GemmaAttention's q/k/v/o would consume random numbers and shift the MLPs'
+    # init. To produce the same numbers as the attention-free version we put an Identity there while
+    # building, then swap in the Stub.
     real_attention = gemma.GemmaAttention
     gemma.GemmaAttention = lambda config, layer_idx: nn.Identity()
     try:
@@ -68,7 +68,7 @@ def build_model(slices):
     pa = load_slice(slices, slices["norms"]["post_attention_layernorm"])
     fn = load_slice(slices, slices["norms"]["final"])
     with torch.no_grad():
-        model.embed_tokens.weight.normal_(0, 0.186)          # gerçek Gemma embedding eleman std'si
+        model.embed_tokens.weight.normal_(0, 0.186)          # element std of the real Gemma embedding
         for i, layer in enumerate(model.layers):
             layer.self_attn = Stub(D)
             for lin in (layer.mlp.gate_proj, layer.mlp.up_proj, layer.mlp.down_proj):
@@ -79,14 +79,14 @@ def build_model(slices):
     return cfg, model
 
 
-# --- Katman varyantları (alt modüller senin) --------------------------------------------------
+# --- Layer variants (the submodules are the project's) ------------------------------------------
 def layer_normal(layer, h):
-    return layer(h, *layer_inputs(h))                 # senin GemmaDecoderLayer.forward'ın
+    return layer(h, *layer_inputs(h))                 # the project's GemmaDecoderLayer.forward
 
 
 def layer_residual_after_norm(layer, h):
     h = layer.input_layernorm(h)
-    residual = h                                      # HATA: residual norm'dan SONRA saklanıyor
+    residual = h                                      # BUG: the residual is saved AFTER the norm
     h = residual + layer.self_attn(h)
     h = layer.post_attention_layernorm(h)
     residual = h
@@ -94,13 +94,13 @@ def layer_residual_after_norm(layer, h):
 
 
 def layer_post_norm(layer, h):
-    # Orijinal Transformer (post-norm): önce topla, sonra normalize et
+    # Original Transformer (post-norm): add first, then normalize
     h = layer.input_layernorm(h + layer.self_attn(h))
     return layer.post_attention_layernorm(h + layer.mlp(h))
 
 
 def run_stream(model, emb, layer_fn, scale=True):
-    """Akışı katman katman izle: norm, embedding'e benzerlik, alt blokların yazdığı güncellemelerin normu."""
+    """Trace the stream layer by layer: norm, similarity to the embedding, norm of the updates the sub-blocks write."""
     h = emb * torch.tensor(D ** 0.5, dtype=emb.dtype) if scale else emb
     x0 = h.clone()
     norms, cos0, attn_upd, mlp_upd = [h.norm(dim=-1).mean().item()], [1.0], [], []
@@ -121,7 +121,7 @@ def run_stream(model, emb, layer_fn, scale=True):
 
 
 def rms_llama_order(norm, x):
-    """Llama sırası: float32'de normalize, ÖNCE girdi dtype'ına dön, SONRA çarp."""
+    """Llama order: normalize in float32, cast back to the input dtype FIRST, THEN multiply."""
     out = norm._norm(x.float()).type_as(x)
     return out * (1.0 + norm.weight.to(x.dtype))
 
@@ -141,21 +141,21 @@ def main():
     with torch.no_grad():
         emb = model.embed_tokens(ids)                               # [1, T, D] ham
 
-        # A) Residual akışı ve varyantları
+        # A) The residual stream and its variants
         doc["stream"] = {
             "normal": run_stream(model, emb, layer_normal),
             "residual_after_norm": run_stream(model, emb, layer_residual_after_norm),
             "post_norm": run_stream(model, emb, layer_post_norm),
             "no_sqrt_d": run_stream(model, emb, layer_normal, scale=False),
         }
-        # Senin GemmaModel.forward'ın ile aynı mı? (normal varyant doğrulaması)
+        # Same as the project's GemmaModel.forward? (checks the normal variant)
         ours_out = model(emb)
         h = emb * torch.tensor(D ** 0.5)
         for layer in model.layers:
             h = layer(h, *layer_inputs(h))
         doc["stream_check_maxdiff"] = (model.norm(h) - ours_out).abs().max().item()
 
-        # B) √d: embedding büyüklükleri (gerçek satırlardan) ve ölçek
+        # B) √d: embedding magnitudes (from real rows) and the scale
         real_rows = load_slice(slices, slices["embed_sample_rows"])            # [400, 2048]
         d_real = real_rows.shape[1]
         doc["sqrt_d"] = {
@@ -170,8 +170,8 @@ def main():
         doc["sqrt_d"]["named_norms"] = [
             {**m, "norm": float(np.linalg.norm(r))} for m, r in zip(slices["embed_named"], named)]
 
-        # ESKİ görsel token yolu (artık kodda yok): ÷√d (paligemma.py) sonra ×√d (gemma.py), float32 ve bf16'da.
-        # Şimdiki kod görsel özellikleri hiç ölçeklemiyor, bu ölçüm yolu neden kısalttığımızı gösteriyor
+        # The OLD image-token path (no longer in the code): ÷√d (paligemma.py) then ×√d (gemma.py), in float32 and bf16.
+        # The current code does not scale image features at all; this measurement shows why the path was shortened
         torch.manual_seed(2)
         img = torch.randn(1, 4, 2048) * 3
         rt = {}
@@ -185,9 +185,9 @@ def main():
             }
         doc["sqrt_d"]["roundtrip"] = rt
 
-        # normalizer'ın dtype'ı: bf16 tensör mü, Python float mı, float32 tensör mü?
+        # dtype of the normalizer: bf16 tensor, Python float or float32 tensor?
         xb = (torch.randn(1, T, 2048) * 0.186).to(torch.bfloat16)
-        ref = xb * torch.tensor(2048 ** 0.5, dtype=torch.bfloat16)               # senin kodun
+        ref = xb * torch.tensor(2048 ** 0.5, dtype=torch.bfloat16)               # the project's code
         variants = {
             "python_float": xb * (2048 ** 0.5),
             "float32_tensor": xb * torch.tensor(2048 ** 0.5, dtype=torch.float32),
@@ -198,7 +198,7 @@ def main():
                 "maxdiff": (v.float() - ref.float()).abs().max().item()}
             for k, v in variants.items()}
 
-        # C) RMSNorm: işlem sırası (Gemma ve Llama) bf16'da
+        # C) RMSNorm: order of operations (Gemma vs Llama) in bf16
         norm = model.layers[0].input_layernorm
         x = torch.randn(4, T, D) * 40
         nb = gemma.GemmaRMSNorm(D, eps=cfg.rms_norm_eps)
@@ -209,7 +209,7 @@ def main():
         doc["rms_order"] = {"n": g.numel(), "n_diff": int((g != l).sum()),
                             "maxdiff": (g.float() - l.float()).abs().max().item()}
 
-        # D) Sıfır ve rastgele ağırlıkla hatalı RMSNorm'lar testte yakalanıyor mu?
+        # D) Are buggy RMSNorms caught by a test with zero vs random weights?
         z = gemma.GemmaRMSNorm(D)
         r = gemma.GemmaRMSNorm(D)
         r.weight.normal_()
@@ -220,7 +220,7 @@ def main():
             "out_rms_zero_w": z(xx).pow(2).mean(-1).sqrt().mean().item(),
         }
 
-        # E) İki norm yer değiştirirse (sıfır ağırlıkta görünmez, gerçek ağırlıkta görünür)
+        # E) If the two norms are swapped (invisible with zero weights, visible with real ones)
         layer = model.layers[0]
         hin = torch.randn(1, T, D) * 40
 
@@ -238,14 +238,14 @@ def main():
             "zero_w": (zero_layer(hin, *layer_inputs(hin)) - swapped(zero_layer, hin)).abs().max().item(),
         }
 
-        # F) GeGLU iç değerleri (katman 0, gerçek akış girdisiyle)
+        # F) GeGLU internals (layer 0, with the real stream as input)
         mlp = model.layers[0].mlp
         hn = model.layers[0].post_attention_layernorm(emb * D ** 0.5)
         gate = mlp.gate_proj(hn)
         up = mlp.up_proj(hn)
         act = F.gelu(gate, approximate="tanh")
         prod = act * up
-        k = 48                                          # görselleştirme için ilk 48 ara boyut
+        k = 48                                          # the first 48 intermediate dims, for visualization
         doc["geglu"] = {
             "gate": w.arr(gate[0, :, :k]), "act": w.arr(act[0, :, :k]),
             "up": w.arr(up[0, :, :k]), "prod": w.arr(prod[0, :, :k]),
@@ -255,7 +255,7 @@ def main():
                 (mlp(hn[:, t:t + 1]) - mlp(hn)[:, t:t + 1]).abs().max().item() for t in range(T)),
         }
 
-        # G) Konteyner karşılaştırması: ModuleList, düz list, Sequential
+        # G) Container comparison: ModuleList, plain list, Sequential
         class WithModuleList(nn.Module):
             def __init__(self):
                 super().__init__()
@@ -276,7 +276,7 @@ def main():
                          "n_params": sum(p.numel() for p in c().parameters())}
             for c in (WithModuleList, WithList, WithSequential)}
 
-        # H) Weight tying adım adım (senin GemmaForCausalLM'in)
+        # H) Weight tying step by step (the project's GemmaForCausalLM)
         lm = gemma.GemmaForCausalLM(cfg)
         before = {"is_same": lm.lm_head.weight is lm.model.embed_tokens.weight,
                   "n_params": sum(p.numel() for p in lm.parameters())}

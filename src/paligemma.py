@@ -5,7 +5,7 @@ from siglip import SiglipVisionConfig, SiglipVisionModel
 from gemma import GemmaConfig, GemmaForCausalLM, KVCache, make_causal_mask
 
 
-# Değerler google/paligemma-3b-pt-224 config.json'dan
+# Values from the google/paligemma-3b-pt-224 config.json
 @dataclass
 class PaliGemmaConfig:
     vision_config: SiglipVisionConfig = field(default_factory=lambda: SiglipVisionConfig(
@@ -46,28 +46,28 @@ class PaliGemmaMultiModalProjector(nn.Module):
         return hidden_states
 
 
-# Prefix-LM maskesi. Prefix = görüntü token'ları + komut (prompt), suffix = modelin ürettiği cevap.
-# Prefix kendi içinde tam attention (her prefix token'ı bütün prefix'i görüyor, "sonrası" da dahil: görüntü
-# yamaları ve komut birbirine iki yönlü bakıyor). Suffix causal: her token prefix'in tamamını ve kendinden öncekileri görüyor.
-# Kural: i. token j. token'a bakabilir <=> j < prefix_len veya j <= i
+# Prefix-LM mask. Prefix = image tokens + prompt, suffix = the answer the model generates.
+# The prefix has full attention within itself (every prefix token sees the whole prefix, including what comes "after": image
+# patches and prompt look at each other in both directions). The suffix is causal: each token sees the whole prefix and the tokens before it.
+# Rule: token i may look at token j <=> j < prefix_len or j <= i
 def make_prefix_lm_mask(
     total_len: int,
     prefix_len: int,
     dtype: torch.dtype,
     device: torch.device,
-) -> torch.Tensor:                                         # [1, 1, total_len, total_len], toplanan maske
-    # Önce nedensel maske (j > i yasak), sonra prefix sütunlarını (j < prefix_len) açıyoruz
+) -> torch.Tensor:                                         # [1, 1, total_len, total_len], additive mask
+    # Start from the causal mask (j > i blocked), then open the prefix columns (j < prefix_len)
     mask = torch.full((total_len, total_len), torch.finfo(dtype).min, dtype=dtype, device=device)
     mask = torch.triu(mask, diagonal=1)
     mask[:, :prefix_len] = 0
     return mask[None, None]
 
 
-# HF'nin parametre adları sürüme göre değişiyor, bizimki sabit. transformers 5 düzeni: model.vision_tower.*,
-# model.language_model.* (GemmaModel doğrudan), lm_head.*. Eski düzen (4.x) zaten bizimkiyle aynı, dokunulmuyor.
-# Ağırlıkların kendisi aynı, sadece adlar farklı. None dönerse o ağırlık atlanıyor
+# HF parameter names change between versions, ours are fixed. transformers 5 layout: model.vision_tower.*,
+# model.language_model.* (the GemmaModel itself), lm_head.*. The old layout (4.x) already matches ours and is left alone.
+# The weights are identical, only the names differ. Returning None skips that weight
 def convert_hf_key(key: str) -> str | None:
-    # PaliGemma SigLIP'in pooling head'ini (probe, attention, mlp) kullanmıyor: sadece encoder'ın çıktısı alınıyor
+    # PaliGemma does not use SigLIP's pooling head (probe, attention, mlp): only the encoder output is taken
     if key.startswith(("model.vision_tower.head.", "vision_tower.vision_model.head.")):
         return None
     for old, new in [("model.vision_tower.", "vision_tower.vision_model."),
@@ -79,8 +79,8 @@ def convert_hf_key(key: str) -> str | None:
     return key
 
 
-# HF state_dict'ini bizim modele yükler. Anahtarlar bire bir tutmazsa sessizce atlamak yerine hata verir:
-# eksik bir ağırlık rastgele kalırsa model çalışır ama saçmalar
+# Loads an HF state_dict into our model. If the keys do not match one to one it raises instead of silently skipping:
+# a missing weight stays random, and the model runs but talks nonsense
 def load_hf_weights(model: "PaliGemmaForConditionalGeneration", hf_state_dict: dict[str, torch.Tensor]) -> None:
     converted = {}
     for key, value in hf_state_dict.items():
@@ -90,10 +90,10 @@ def load_hf_weights(model: "PaliGemmaForConditionalGeneration", hf_state_dict: d
 
     ours_keys, hf_keys = set(model.state_dict()), set(converted)
     if ours_keys != hf_keys:
-        raise KeyError(f"state_dict anahtarları tutmuyor. Bizde olup HF'de olmayan: {sorted(ours_keys - hf_keys)[:5]}, "
-                       f"HF'de olup bizde olmayan: {sorted(hf_keys - ours_keys)[:5]}")
+        raise KeyError(f"state_dict keys do not match. In ours but not in HF: {sorted(ours_keys - hf_keys)[:5]}, "
+                       f"in HF but not in ours: {sorted(hf_keys - ours_keys)[:5]}")
     model.load_state_dict(converted)
-    # load_state_dict değerleri kopyalar, lm_head ile embedding'in aynı Parameter olmasını garanti etmez
+    # load_state_dict copies values; it does not guarantee lm_head and the embedding are the same Parameter
     model.tie_weights()
 
 
@@ -121,10 +121,10 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         batch_size, sequence_length = input_ids.shape
         dtype, device = inputs_embeds.dtype, inputs_embeds.device
 
-        # Metin embedding'leri sqrt(hidden_size) ile çarpılıyor (Gemma'nın embedding ölçeği), görsel özellikler ölçeksiz.
-        # Eskiden görseller önce sqrt(d)'ye bölünüp Gemma hepsini birden çarpıyordu: matematiksel olarak aynı ama bf16'da
-        # iki yuvarlama ekliyordu (sqrt(2048) = 45.25 2'nin kuvveti değil), HF'ye göre logit'lerde ~0.2 ortalama fark çıkıyordu.
-        # Ölçek inputs_embeds'in dtype'ında: HF'nin ölçekli embedding tablosuyla aynı işlem
+        # Text embeddings are multiplied by sqrt(hidden_size) (Gemma's embedding scale), image features are left unscaled.
+        # Dividing image features by sqrt(d) and letting Gemma multiply everything is the same math, but in bf16 it
+        # adds two roundings (sqrt(2048) = 45.25 is not a power of 2), which gave a ~0.2 mean logit difference from HF.
+        # The scale is in inputs_embeds' dtype: the same operation as HF's scaled embedding table
         normalizer = torch.tensor(self.config.hidden_size ** 0.5, dtype=inputs_embeds.dtype)
         scaled_text_embeds = inputs_embeds * normalizer
 
@@ -140,7 +140,7 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         pad_mask_expanded = pad_mask.unsqueeze(-1).expand(-1, -1, embed_dim)
 
         final_embedding = torch.where(text_mask_expanded, scaled_text_embeds, final_embedding)
-        # torch.where kullanılamaz: görsel özellikler [B, 256, D], dizi [B, T, D]. masked_scatter sırayla yerleştirir
+        # torch.where does not work here: image features are [B, 256, D], the sequence is [B, T, D]. masked_scatter fills them in order
         final_embedding = final_embedding.masked_scatter(image_mask_expanded, image_features.to(dtype))
         final_embedding = torch.where(pad_mask_expanded, torch.zeros_like(final_embedding), final_embedding)
 
@@ -148,31 +148,31 @@ class PaliGemmaForConditionalGeneration(nn.Module):
 
     def forward(
         self,
-        input_ids: torch.Tensor,                # [B, T]. Cache'le üretim adımında sadece yeni token: [B, 1]
-        pixel_values: torch.Tensor | None,      # [B, 3, 224, 224]. Üretim adımında None: görüntü zaten cache'te
+        input_ids: torch.Tensor,                # [B, T]. In a cached generation step only the new token: [B, 1]
+        pixel_values: torch.Tensor | None,      # [B, 3, 224, 224]. None in a generation step: the image is already in the cache
         attention_mask: torch.Tensor,           # [B, T]
-        prefix_len: int | None = None,          # ilk kaç token prefix (görüntü + komut). Verilmezse bütün girdi prefix
-        kv_cache: KVCache | None = None,        # boşsa prefill (doldurulur), doluysa üretim adımı
+        prefix_len: int | None = None,          # how many leading tokens are prefix (image + prompt). The whole input if None
+        kv_cache: KVCache | None = None,        # empty: prefill (gets filled), non-empty: generation step
     ) -> torch.Tensor:                          # [B, T, vocab_size]
-        assert torch.all(attention_mask == 1), "padding desteklenmiyor"
+        assert torch.all(attention_mask == 1), "padding is not supported"
         B, T = input_ids.shape
 
-        # Üretim adımı: cache'te görüntü + komut + şimdiye kadarki cevap zaten var. Yeni token'lar sadece metin,
-        # SigLIP ve projektör bir daha çalışmıyor (prefill'de bir kez çalıştı, sonucu K/V olarak cache'te)
+        # Generation step: the cache already holds image + prompt + the answer so far. New tokens are text only,
+        # so SigLIP and the projector do not run again (they ran once at prefill, their result is in the cache as K/V)
         past_len = kv_cache.get_seq_length() if kv_cache is not None else 0
         if past_len > 0:
             inputs_embeds = self.language_model.get_input_embeddings()(input_ids)        # [B, T, 2048]
-            # Prefill'de metne ne yapıldıysa aynısı: ölçek _merge...'deki gibi inputs_embeds'in dtype'ında
+            # Same as what prefill does to text: the scale is in inputs_embeds' dtype, as in _merge...
             inputs_embeds = inputs_embeds * torch.tensor(self.config.hidden_size ** 0.5, dtype=inputs_embeds.dtype)
-            # Konumlar prefill'in kaldığı yerden: prefill 1..past_len'i kullandı, yeniler past_len+1'den başlıyor
+            # Positions continue from prefill: prefill used 1..past_len, new tokens start at past_len+1
             position_ids = torch.arange(past_len + 1, past_len + T + 1, device=input_ids.device).unsqueeze(0).expand(B, -1)
-            # Yeni token'lar suffix (cevap): geçmişin tamamını (prefix + önceki cevap) ve kendilerinden öncekileri görüyor.
-            # T = 1'de [1, 1, 1, past_len + 1] ve tamamen 0. prefix_len gerekmiyor, prefix'in tamamı geçmişte
+            # New tokens are suffix (answer): they see the whole past (prefix + earlier answer) and the new tokens before them.
+            # With T = 1 it is [1, 1, 1, past_len + 1] and all zeros. prefix_len is not needed, the whole prefix is in the past
             mask = make_causal_mask(T, inputs_embeds.dtype, inputs_embeds.device, past_len)
             return self.language_model(inputs_embeds, attention_mask=mask, position_ids=position_ids,
                                        scale_embeddings=False, kv_cache=kv_cache)
-        # Cache'siz üretimde girdiye cevap token'ları eklenip forward tekrar çağrılıyor: prefix o zaman
-        # ilk komutun uzunluğu, T değil. İlk çağrıda cevap yok, bütün girdi prefix
+        # Without a cache, generation appends the answer tokens to the input and calls forward again: the prefix is then
+        # the length of the original prompt, not T. On the first call there is no answer, so the whole input is prefix
         if prefix_len is None:
             prefix_len = T
 
@@ -181,13 +181,13 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         image_features = self.multi_modal_projector(image_features)                 # [B, 256, 2048]
         inputs_embeds = self._merge_input_ids_with_image_features(image_features, inputs_embeds, input_ids)
 
-        # Konumlar 1'den başlıyor (HF PaliGemma böyle). RoPE yalnızca konum farkına bağlı olduğu için 0'dan başlasa da
-        # sonuç matematiksel olarak aynı olurdu, ama HF ile birebir kalmak için aynısını yapıyoruz
+        # Positions start at 1 (as in HF PaliGemma). RoPE only depends on position differences, so starting at 0 would
+        # give the same result mathematically, but we match HF to stay bit-exact
         position_ids = torch.arange(1, T + 1, device=input_ids.device).unsqueeze(0).expand(B, -1)   # [B, T]
         mask = make_prefix_lm_mask(T, prefix_len, inputs_embeds.dtype, inputs_embeds.device)         # [1, 1, T, T]
 
-        # Metin burada zaten ölçeklendi (_merge...), GemmaModel tekrar çarpmasın.
-        # Cache verildiyse bu prefill: her katmanın görüntü + komut K/V'si cache'e yazılıyor
+        # Text is already scaled here (_merge...), so GemmaModel must not multiply again.
+        # With a cache this is the prefill: every layer writes the image + prompt K/V into it
         logits = self.language_model(inputs_embeds, attention_mask=mask, position_ids=position_ids,
                                      scale_embeddings=False, kv_cache=kv_cache)
         return logits

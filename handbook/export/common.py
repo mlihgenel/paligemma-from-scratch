@@ -1,11 +1,11 @@
-"""Export scriptlerinin ortak yardımcıları.
+"""Shared helpers for the export scripts.
 
-Bütün scriptler proje kökünden .venv ile çalışır:
+All scripts run from the project root with the .venv:
     .venv/bin/python handbook/export/<script>.py
 
-Çıktı: handbook/public/data/<ad>.json (+ büyük diziler için <ad>__<dizi>.bin).
-JSON içinde bir dizi {"$bin": dosya, "shape": [...], "dtype": "f32"|"f16"|"u8"} olarak durur,
-kitaptaki lib/data.ts bunu otomatik Float32Array'e çevirir.
+Output: handbook/public/data/<name>.json (+ <name>__<array>.bin for large arrays).
+Inside the JSON an array is stored as {"$bin": file, "shape": [...], "dtype": "f32"|"f16"|"u8"},
+and the handbook's lib/data.ts turns it into a Float32Array automatically.
 """
 import json
 import sys
@@ -13,18 +13,18 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[2]          # proje kökü (paligemma2/)
+ROOT = Path(__file__).resolve().parents[2]          # project root
 SRC = ROOT / "src"
 OUT = ROOT / "handbook" / "public" / "data"
 OUT.mkdir(parents=True, exist_ok=True)
-IMAGE_DIR = Path.home() / "Desktop/yz50-research/papers/01-paligemma2/experiment/data/images"
+IMAGE_DIR = Path(__file__).resolve().parent / "images"     # example photos (credits in images/CREDITS.md)
 PG_ID = "google/paligemma-3b-pt-224"
 
-sys.path.insert(0, str(SRC))   # checks/ ile aynı: senin modüllerin import ediliyor
+sys.path.insert(0, str(SRC))   # same as checks/: the project's own modules are imported
 
 
 class Writer:
-    """Bir JSON belgesi ve ona bağlı .bin dosyalarını yazar."""
+    """Writes a JSON document and the .bin files it points to."""
 
     def __init__(self, name: str):
         self.name = name
@@ -41,11 +41,11 @@ class Writer:
     def save(self, doc: dict):
         path = OUT / f"{self.name}.json"
         path.write_text(json.dumps(doc, ensure_ascii=False, default=_default))
-        print(f"yazıldı: {path.relative_to(ROOT)} (+{self.n} bin)")
+        print(f"wrote: {path.relative_to(ROOT)} (+{self.n} bin)")
 
 
 def small_list(a, nd: int = 5):
-    """Küçük dizileri JSON'a okunur sayı listesi olarak koy."""
+    """Put small arrays into the JSON as a readable list of numbers."""
     return np.round(np.asarray(a, dtype=np.float64), nd).tolist()
 
 

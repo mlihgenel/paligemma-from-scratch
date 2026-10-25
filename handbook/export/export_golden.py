@@ -1,9 +1,9 @@
-"""lib/tensor.ts ve lib/bf16.ts için altın değerler (PyTorch'tan).
+"""Golden values for lib/tensor.ts and lib/bf16.ts (from PyTorch).
 
-Kitaptaki interaktif hesaplar JS'de yapılıyor; vitest bunları buradaki PyTorch sonuçlarıyla karşılaştırıyor.
-RMSNorm burada senin GemmaRMSNorm'unla hesaplanıyor.
+The handbook's interactive math runs in JS; vitest compares it with the PyTorch results produced here.
+RMSNorm is computed here with the project's GemmaRMSNorm.
 
-Çalıştır: .venv/bin/python handbook/export/export_golden.py
+Run: .venv/bin/python handbook/export/export_golden.py
 """
 import json
 
@@ -31,7 +31,7 @@ def main():
         rms = norm(x)
         ln = F.layer_norm(x, (8,), eps=1e-6)
 
-    # bf16: hem yuvarlama hem Gemma RMSNorm'unun bf16 sonucu
+    # bf16: both the rounding and the bf16 result of Gemma's RMSNorm
     vals = torch.cat([torch.randn(200) * 50, torch.tensor([2048 ** 0.5, 1 / 3, 0.1, 65504.0, 1e-8, -0.0, 3.0e38])])
     xb = (torch.randn(2, 16) * 40).to(torch.bfloat16)
     wb = torch.randn(16)
@@ -48,11 +48,11 @@ def main():
         "gelu_tanh": L(F.gelu(g, approximate="tanh")), "gelu_erf": L(F.gelu(g)), "silu": L(F.silu(g)), "grid": L(g),
         "softmax": L(torch.softmax(x, dim=-1)),
         "bf16_in": L(vals), "bf16_out": L(vals.to(torch.bfloat16)),
-        # nb.to(bfloat16) ağırlığı da bf16a çeviriyor: JS tarafına çevrilmiş hali gidiyor
+        # nb.to(bfloat16) also converts the weight to bf16: the converted values go to the JS side
         "rms_bf16_x": L(xb), "rms_bf16_w": L(nb.weight), "rms_bf16_out": L(rms_bf16),
     }
     OUT.write_text(json.dumps(doc))
-    print("yazıldı:", OUT.relative_to(ROOT))
+    print("wrote:", OUT.relative_to(ROOT))
 
 
 if __name__ == "__main__":

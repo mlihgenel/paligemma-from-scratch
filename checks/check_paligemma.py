@@ -1,17 +1,14 @@
-"""PaliGemma parçaları doğru çalışıyor mu?
+"""Do the PaliGemma parts work correctly?
 
-src/paligemma.py'de henüz yazılmamış parçalar atlanır, yani her yeni parçayı yazdıkça
-script'i yeniden çalıştırabilirsin:
+    make_prefix_lm_mask -> against a hand-written expected pattern
+    load_hf_weights, convert_hf_key -> are all HF weights loaded into our model under the right names
+    PaliGemmaForConditionalGeneration -> HF PaliGemmaForConditionalGeneration (small random config, logits)
+    (bf16)             -> the same model in bf16 is bit-exact with HF (unscaled image merge)
+    (KV cache)         -> cached prefill + token-by-token logits = uncached full sequence (prefix + suffix)
+    generate (src/generate.py) -> HF generate(do_sample=False): same tokens, including stopping at eos;
+                          cached and uncached (use_cache=False) generation also match each other
 
-    make_prefix_lm_mask -> elle yazılmış beklenen desenle
-    load_hf_weights, convert_hf_key -> HF ağırlıkları bizim modele eksiksiz ve doğru adla yükleniyor mu
-    PaliGemmaForConditionalGeneration -> HF PaliGemmaForConditionalGeneration (küçük rastgele config, logit'ler)
-    (bf16)             -> aynı model bf16'da HF ile birebir (görüntü ölçeksiz birleştirme)
-    (KV cache)         -> prefill + token token cache'li logit'ler = cache'siz tam dizi (prefix + suffix)
-    generate (src/generate.py) -> HF generate(do_sample=False): token token aynı, eos'ta durma dahil;
-                          cache'li ve cache'siz (use_cache=False) üretim de birbiriyle aynı
-
-Çalıştır (proje kökünden):
+Run (from the project root):
     .venv/bin/python checks/check_paligemma.py
 """
 import sys
@@ -33,18 +30,18 @@ def compare(name, ours, theirs):
     same_shape = ours.shape == theirs.shape
     max_diff = (ours - theirs).abs().max().item() if same_shape else float("nan")
     ok = same_shape and torch.allclose(ours, theirs, atol=ATOL)
-    print(f"[{'OK ' if ok else 'HATA'}] {name}: bizim {tuple(ours.shape)}, HF {tuple(theirs.shape)}, max fark {max_diff:.2e}")
+    print(f"[{'OK ' if ok else 'FAIL'}] {name}: ours {tuple(ours.shape)}, HF {tuple(theirs.shape)}, max diff {max_diff:.2e}")
     return ok
 
 
 def check_prefix_lm_mask():
-    # 5 token: ilk 3'ü prefix (görüntü + komut), son 2'si suffix (üretilen cevap)
+    # 5 tokens: the first 3 are prefix (image + prompt), the last 2 suffix (generated answer)
     total_len, prefix_len = 5, 3
     mask = paligemma.make_prefix_lm_mask(total_len, prefix_len, torch.float32, torch.device("cpu"))
     allowed = (mask[0, 0] == 0)
 
-    # 1 = bakabilir. Prefix satırları: prefix'in hepsini görüyor, suffix'i görmüyor.
-    # Suffix satırları: prefix'in hepsini + kendinden öncekileri ve kendini görüyor
+    # 1 = may look. Prefix rows see the whole prefix but not the suffix.
+    # Suffix rows see the whole prefix + the tokens before them and themselves
     expected = torch.tensor([
         [1, 1, 1, 0, 0],
         [1, 1, 1, 0, 0],
@@ -53,32 +50,32 @@ def check_prefix_lm_mask():
         [1, 1, 1, 1, 1],
     ], dtype=torch.bool)
 
-    print("izinli yerler (1 = bakabilir):")
+    print("allowed positions (1 = may look):")
     for row in allowed.int().tolist():
         print("  ", row)
 
     ok_pattern = torch.equal(allowed, expected)
-    print(f"[{'OK ' if ok_pattern else 'HATA'}] prefix-LM maskesi: prefix iki yönlü, suffix nedensel")
+    print(f"[{'OK ' if ok_pattern else 'FAIL'}] prefix-LM mask: bidirectional prefix, causal suffix")
 
-    # Yasak yerler en küçük sayı, izinli yerler tam 0 olmalı (attention'da skora toplanıyor)
+    # Blocked positions must be the smallest number, allowed ones exactly 0 (added to the scores in attention)
     ok_values = bool((mask[0, 0][~expected] == torch.finfo(torch.float32).min).all()
                      and (mask[0, 0][expected] == 0).all())
-    print(f"[{'OK ' if ok_values else 'HATA'}] maske değerleri: izinli 0, yasak finfo.min")
+    print(f"[{'OK ' if ok_values else 'FAIL'}] mask values: allowed 0, blocked finfo.min")
 
-    # prefix_len = 1 nedensel maskenin aynısı olmalı, prefix_len = total_len tam attention
+    # prefix_len = 1 must equal the causal mask, prefix_len = total_len full attention
     from gemma import make_causal_mask
     ok_causal = torch.equal(paligemma.make_prefix_lm_mask(total_len, 1, torch.float32, torch.device("cpu")),
                             make_causal_mask(total_len, torch.float32, torch.device("cpu")))
     full = paligemma.make_prefix_lm_mask(total_len, total_len, torch.float32, torch.device("cpu"))
     ok_full = bool((full == 0).all())
-    print(f"[{'OK ' if ok_causal else 'HATA'}] prefix_len=1: nedensel maskeyle aynı")
-    print(f"[{'OK ' if ok_full else 'HATA'}] prefix_len=total_len: tam attention (hiçbir yer yasak değil)")
+    print(f"[{'OK ' if ok_causal else 'FAIL'}] prefix_len=1: same as the causal mask")
+    print(f"[{'OK ' if ok_full else 'FAIL'}] prefix_len=total_len: full attention (nothing blocked)")
     return ok_pattern and ok_values and ok_causal and ok_full
 
 
-# Küçük config: gerçek modelde vision 1152/27 katman, text 2048/18 katman. Mantık aynı, yerelde hızlı
+# Small config: the real model has vision 1152/27 layers, text 2048/18 layers. Same logic, fast locally
 VISION = dict(hidden_size=32, intermediate_size=64, num_hidden_layers=2, num_attention_heads=4,
-              patch_size=14, image_size=28)                      # 28/14 = 2x2 = 4 görüntü token'ı
+              patch_size=14, image_size=28)                      # 28/14 = 2x2 = 4 image tokens
 TEXT = dict(vocab_size=300, hidden_size=64, intermediate_size=128, num_hidden_layers=2,
             num_attention_heads=4, num_key_value_heads=1, head_dim=16, pad_token_id=0)
 IMAGE_TOKEN = 257
@@ -98,8 +95,8 @@ def build_models(hidden_size=TEXT["hidden_size"], bf16=False):
     hf_config.text_config._attn_implementation = "eager"
     hf_config.vision_config._attn_implementation = "eager"
     hf = HFPaliGemma(hf_config).eval()
-    # Başlangıç ağırlıkları çok küçük (std 0.02): logit'ler neredeyse sıfır olur ve yanlış bir mask ya da
-    # position testi bile geçer. Hepsini daha büyük rastgele değerlerle dolduruyoruz (norm ağırlıkları dahil)
+    # The init weights are tiny (std 0.02): logits come out near zero and even a wrong mask or
+    # position would pass. So everything gets larger random values (norm weights included)
     with torch.no_grad():
         for p in hf.parameters():
             p.normal_(0, 0.2)
@@ -113,12 +110,12 @@ def build_models(hidden_size=TEXT["hidden_size"], bf16=False):
     if not bf16:
         return hf, paligemma.PaliGemmaForConditionalGeneration(ours_config).eval()
 
-    # bf16: HF from_pretrained(dtype=bf16) ile yüklenmiş gibi. Düz .to(bf16) RoPE frekanslarını da (buffer) bf16'ya
-    # yuvarlardı, from_pretrained'da float32 kalıyorlar: geri koyuyoruz
+    # bf16: as if loaded with HF from_pretrained(dtype=bf16). A plain .to(bf16) would also round the RoPE
+    # frequencies (a buffer) to bf16, while from_pretrained keeps them float32: put them back
     inv_freq = hf.model.language_model.rotary_emb.inv_freq.clone()
     hf = hf.to(torch.bfloat16)
     hf.model.language_model.rotary_emb.inv_freq = inv_freq
-    # Bizimki varsayılan dtype bf16 iken kuruluyor (Colab'daki gibi): inv_freq açıkça float32 olduğu için öyle kalıyor
+    # Ours is built with bf16 as the default dtype (as in Colab): inv_freq stays float32 because it is created explicitly so
     torch.set_default_dtype(torch.bfloat16)
     try:
         ours = paligemma.PaliGemmaForConditionalGeneration(ours_config).eval()
@@ -128,7 +125,7 @@ def build_models(hidden_size=TEXT["hidden_size"], bf16=False):
 
 
 def build_loaded_pair(**kwargs):
-    """HF modeli + ağırlıkları src/paligemma.py'deki yükleyiciyle kopyalanmış bizim model."""
+    """The HF model + our model with its weights copied by the loader in src/paligemma.py."""
     hf, ours = build_models(**kwargs)
     paligemma.load_hf_weights(ours, hf.state_dict())
     return hf, ours
@@ -138,36 +135,36 @@ def check_loader():
     hf, ours = build_models()
     paligemma.load_hf_weights(ours, hf.state_dict())
 
-    # Her ağırlık HF'dekiyle aynı mı (head.* hariç) ve weight tying kurulu mu
+    # Is every weight the same as in HF (except head.*), and is weight tying in place
     ours_sd = ours.state_dict()
     same = all(torch.equal(ours_sd[paligemma.convert_hf_key(k)], v)
                for k, v in hf.state_dict().items() if paligemma.convert_hf_key(k) is not None)
     tied = ours.language_model.lm_head.weight is ours.language_model.model.embed_tokens.weight
-    print(f"[{'OK ' if same else 'HATA'}] load_hf_weights: bütün ağırlıklar HF ile aynı")
-    print(f"[{'OK ' if tied else 'HATA'}] load_hf_weights: lm_head.weight embedding ile aynı Parameter")
+    print(f"[{'OK ' if same else 'FAIL'}] load_hf_weights: all weights match HF")
+    print(f"[{'OK ' if tied else 'FAIL'}] load_hf_weights: lm_head.weight is the same Parameter as the embedding")
 
-    # Eski (4.x) düzendeki adlar da bizim adlara çıkmalı, head atlanmalı
+    # Names in the old (4.x) layout must also map to ours, and the head must be skipped
     old_layout = {"vision_tower.vision_model.encoder.layers.0.mlp.fc1.weight": "vision_tower.vision_model.encoder.layers.0.mlp.fc1.weight",
                   "language_model.model.layers.0.self_attn.q_proj.weight": "language_model.model.layers.0.self_attn.q_proj.weight",
                   "language_model.lm_head.weight": "language_model.lm_head.weight",
                   "vision_tower.vision_model.head.probe": None,
                   "model.vision_tower.head.probe": None}
     old_ok = all(paligemma.convert_hf_key(k) == v for k, v in old_layout.items())
-    print(f"[{'OK ' if old_ok else 'HATA'}] convert_hf_key: eski düzen aynen geçiyor, head atlanıyor")
+    print(f"[{'OK ' if old_ok else 'FAIL'}] convert_hf_key: old layout passes through, head is skipped")
 
-    # Eksik bir anahtar sessizce geçmemeli
+    # A missing key must not pass silently
     broken = {k: v for k, v in hf.state_dict().items() if "post_layernorm" not in k}
     try:
         paligemma.load_hf_weights(ours, broken)
         raised = False
     except KeyError:
         raised = True
-    print(f"[{'OK ' if raised else 'HATA'}] load_hf_weights: eksik ağırlıkta hata veriyor")
+    print(f"[{'OK ' if raised else 'FAIL'}] load_hf_weights: raises on a missing weight")
     return bool(same and tied and old_ok and raised)
 
 
 def make_inputs():
-    # [<image> x4, metin...]. Token id'leri 0'dan (pad) ve görüntü token'ından farklı
+    # [<image> x4, text...]. Token ids differ from 0 (pad) and from the image token
     input_ids = torch.cat([torch.full((B, 4), IMAGE_TOKEN), torch.randint(5, 250, (B, N_TEXT))], dim=1)
     pixel_values = torch.randn(B, 3, VISION["image_size"], VISION["image_size"])
     return input_ids, pixel_values, torch.ones_like(input_ids)
@@ -183,7 +180,7 @@ def check_model():
 
     ok = True
     with torch.no_grad():
-        # 1) Bütün girdi prefix (cevap yok): HF'ye token_type_ids = 0 vererek prefix'i iki yönlü yaptırıyoruz
+        # 1) The whole input is prefix (no answer): token_type_ids = 0 makes HF treat the prefix as bidirectional
         hf_logits = hf(input_ids=input_ids, pixel_values=pixel_values, attention_mask=attention_mask,
                        token_type_ids=torch.zeros(B, T, dtype=torch.long)).logits
         ok &= compare("PaliGemma logit'ler (hepsi prefix)", ours(input_ids, pixel_values, attention_mask), hf_logits)
@@ -196,20 +193,20 @@ def check_model():
         ok &= compare("PaliGemma logit'ler (prefix + suffix)",
                       ours(input_ids, pixel_values, attention_mask, prefix_len=prefix_len), hf_logits_suffix)
 
-        # 3) Bulgu: token_type_ids verilmezse HF prefix'i de nedensel yapıyor. Bizim prefix-LM sonucumuz ondan
-        # farklı olmalı (testin duyarlı olduğunu da gösteriyor: yanlış mask yanlış sonuç verirdi)
+        # 3) Without token_type_ids HF makes the prefix causal too. Our prefix-LM result must differ from that
+        # (this also shows the test is sensitive: a wrong mask would give a wrong result)
         hf_causal = hf(input_ids=input_ids, pixel_values=pixel_values, attention_mask=attention_mask).logits
         gap = (hf_causal - hf_logits).abs().max().item()
         differs = gap > 1e-2
-        print(f"[{'OK ' if differs else 'HATA'}] HF token_type_ids'siz (nedensel) ile prefix-LM logit'leri farklı: max fark {gap:.2e}")
+        print(f"[{'OK ' if differs else 'FAIL'}] HF without token_type_ids (causal) differs from prefix-LM logits: max diff {gap:.2e}")
         ok &= differs
 
-        # 4) Konum 0'dan da 1'den da başlasa sonuç aynı mı (RoPE yalnızca konum farkına bağlı)
+        # 4) Same result whether positions start at 0 or 1 (RoPE only depends on position differences)
         lm = ours.language_model
         embeds = torch.randn(B, T, TEXT["hidden_size"])
         mask = paligemma.make_prefix_lm_mask(T, prefix_len, embeds.dtype, embeds.device)
         pos0 = torch.arange(T).unsqueeze(0).expand(B, -1)
-        ok &= compare("konum 0'dan vs 1'den başlayınca logit'ler",
+        ok &= compare("logits with positions from 0 vs from 1",
                       lm(embeds, mask, pos0), lm(embeds, mask, pos0 + 1))
     return bool(ok)
 
@@ -218,31 +215,31 @@ def check_kv_cache():
     _, ours = build_loaded_pair()
     input_ids, pixel_values, attention_mask = make_inputs()
     T = input_ids.shape[1]
-    prefix_len = T - 3            # görüntü + komutun bir kısmı prefix, son 3 token "cevap" gibi tek tek veriliyor
+    prefix_len = T - 3            # image + part of the prompt is prefix, the last 3 tokens go one by one like an "answer"
 
     ok = True
     with torch.no_grad():
         # Referans: cache'siz, tam dizi tek seferde
         full = ours(input_ids, pixel_values, attention_mask, prefix_len=prefix_len)          # [B, T, vocab]
 
-        # Prefill: sadece prefix, görüntüyle. Sonra suffix token'ları birer birer, görüntüsüz
+        # Prefill: only the prefix, with the image. Then the suffix tokens one at a time, without the image
         cache = paligemma.KVCache()
         steps = [ours(input_ids[:, :prefix_len], pixel_values, attention_mask[:, :prefix_len], kv_cache=cache)]
         for t in range(prefix_len, T):
             steps.append(ours(input_ids[:, t:t + 1], None, attention_mask[:, t:t + 1], kv_cache=cache))
-        ok &= compare("PaliGemma cache'li (prefill + 3 adım) = cache'siz tam dizi", torch.cat(steps, dim=1), full)
+        ok &= compare("PaliGemma cached (prefill + 3 steps) = uncached full sequence", torch.cat(steps, dim=1), full)
 
         n_layers = TEXT["num_hidden_layers"]
         ok_len = len(cache.key_cache) == n_layers and cache.get_seq_length() == T
-        print(f"[{'OK ' if ok_len else 'HATA'}] cache: {len(cache.key_cache)} katman (beklenen {n_layers}), "
-              f"uzunluk {cache.get_seq_length()} (beklenen {T})")
+        print(f"[{'OK ' if ok_len else 'FAIL'}] cache: {len(cache.key_cache)} layers (expected {n_layers}), "
+              f"length {cache.get_seq_length()} (expected {T})")
         ok &= ok_len
     return bool(ok)
 
 
 def check_bf16_exact():
-    # Gerçek model bf16'da çalışıyor. hidden_size=48: sqrt(48) 2'nin kuvveti değil. sqrt(64) = 8 olsaydı
-    # "görüntüyü sqrt(d)'ye böl, sonra hepsini çarp" yöntemi de yuvarlama yapmaz ve bu test o hatayı yakalamazdı
+    # The real model runs in bf16. hidden_size=48: sqrt(48) is not a power of 2. With sqrt(64) = 8 the
+    # "divide the image by sqrt(d), then multiply everything" approach would not round and this test would miss it
     hf, ours = build_loaded_pair(hidden_size=48, bf16=True)
     input_ids, pixel_values, attention_mask = make_inputs()
     pixel_values = pixel_values.to(torch.bfloat16)
@@ -252,7 +249,7 @@ def check_bf16_exact():
         our_logits = ours(input_ids, pixel_values, attention_mask).float()
     max_diff = (our_logits - hf_logits).abs().max().item()
     ok = torch.equal(our_logits, hf_logits)
-    print(f"[{'OK ' if ok else 'HATA'}] bf16, hidden_size=48: logit'ler HF ile birebir aynı (max fark {max_diff:.2e})")
+    print(f"[{'OK ' if ok else 'FAIL'}] bf16, hidden_size=48: logits bit-exact with HF (max diff {max_diff:.2e})")
     return ok
 
 
@@ -265,27 +262,27 @@ def check_generate():
     steps = 8
 
     def hf_generate(eos):
-        # token_type_ids = 0: prefix iki yönlü. HF üretim sırasında yeni token'lara kendisi 1 ekliyor (suffix)
+        # token_type_ids = 0: bidirectional prefix. During generation HF itself adds 1 for new tokens (suffix)
         out = hf.generate(input_ids=input_ids, pixel_values=pixel_values, attention_mask=attention_mask,
                           token_type_ids=torch.zeros_like(input_ids), max_new_tokens=steps, do_sample=False,
                           eos_token_id=eos, pad_token_id=TEXT["pad_token_id"])
-        return out[:, T:]                                    # HF komutu da geri döndürüyor
+        return out[:, T:]                                    # HF also returns the prompt
 
     def ours_generate(eos, use_cache):
         return generate.generate(ours, input_ids, pixel_values, attention_mask, steps,
                                  eos_token_id=eos, use_cache=use_cache)
 
     ok = True
-    # 1) eos'suz: hepsi max_new_tokens kadar üretiliyor
-    # 2) eos: ilk örneğin 3. token'ını eos ilan et. O örnek orada durmalı, sonrası pad, diğer örnek devam etmeli
+    # 1) no eos: every sample generates max_new_tokens tokens
+    # 2) eos: declare the first sample's 3rd token as eos. That sample must stop there and pad, the other must go on
     eos = int(ours_generate(-1, use_cache=True)[0, 2])
-    for label, our_eos, hf_eos in [("eos yok", -1, None), (f"eos={eos}", eos, eos)]:
+    for label, our_eos, hf_eos in [("no eos", -1, None), (f"eos={eos}", eos, eos)]:
         hf_tokens = hf_generate(eos=hf_eos)
         for use_cache in (True, False):
             ours_tokens = ours_generate(our_eos, use_cache)
             same = torch.equal(ours_tokens, hf_tokens)
-            print(f"[{'OK ' if same else 'HATA'}] greedy üretim ({'cache' if use_cache else 'cache yok'}), "
-                  f"{label}: ilk örnek {ours_tokens[0].tolist()}")
+            print(f"[{'OK ' if same else 'FAIL'}] greedy generation ({'cache' if use_cache else 'no cache'}), "
+                  f"{label}: first sample {ours_tokens[0].tolist()}")
             if not same:
                 print(f"   HF: {hf_tokens[0].tolist()}")
             ok &= same
@@ -306,16 +303,16 @@ def main():
     results = []
     for name, fn in checks:
         if not hasattr(paligemma, name) and not hasattr(generate, name):
-            print(f"[ -- ] {name}: paligemma.py'de henüz yok, atlandı")
+            print(f"[ -- ] {name}: not in paligemma.py, skipped")
             continue
         try:
             results.append(fn())
         except Exception as e:
-            print(f"[HATA] {name}: {type(e).__name__}: {e}")
+            print(f"[FAIL] {name}: {type(e).__name__}: {e}")
             results.append(False)
 
     ok = bool(results) and all(results)
-    print(f"\nSonuç: {'yazılan parçalar beklenen gibi ✅' if ok else 'fark var ❌'}")
+    print(f"\nResult: {'everything works as expected ✅' if ok else 'mismatch ❌'}")
     sys.exit(0 if ok else 1)
 
 

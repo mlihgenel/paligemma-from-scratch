@@ -1,11 +1,11 @@
-"""google/paligemma-3b-pt-224 ağırlıklarından sadece küçük parçaları HTTP Range ile çeker.
+"""Fetches only small slices of the google/paligemma-3b-pt-224 weights with HTTP Range requests.
 
-Model ~6 GB, ama kitap için gereken: norm ağırlıkları, birkaç yüz embedding satırı, SigLIP'in
-konum embedding'i ve yama filtreleri, projektör istatistikleri. safetensors dosyası
-[8 bayt header uzunluğu][JSON header][ham veri] düzeninde olduğu için her tensörün bayt aralığı
-header'dan okunup sadece o aralık indirilebiliyor. Toplam birkaç MB.
+The model is ~6 GB, but the handbook only needs norm weights, a few hundred embedding rows, SigLIP's
+position embedding and patch filters, and projector statistics. A safetensors file is laid out as
+[8-byte header length][JSON header][raw data], so each tensor's byte range can be read from the
+header and only that range downloaded. A few MB in total.
 
-Gated repo: `hf auth login` gerekir (tokenizer zaten bu repodan indi, yani erişim var).
+Gated repo: needs `hf auth login` and an accepted license on the model page.
 """
 import json
 import struct
@@ -23,7 +23,7 @@ _header_cache: dict[str, tuple[int, dict]] = {}
 
 
 def get_range(fname: str, start: int, end: int) -> bytes:
-    """[start, end) bayt aralığını indir."""
+    """Download the byte range [start, end)."""
     url = hf_hub_url(PG_ID, fname)
     r = requests.get(url, headers={**HEADERS, "Range": f"bytes={start}-{end - 1}"}, timeout=120)
     r.raise_for_status()
@@ -61,7 +61,7 @@ def fetch(name: str, weight_map: dict) -> np.ndarray:
 
 
 def fetch_rows(name: str, weight_map: dict, rows: list[int]) -> np.ndarray:
-    """Büyük bir 2D tensörden sadece seçilen satırları indir (embedding tablosu)."""
+    """Download only the selected rows of a large 2D tensor (the embedding table)."""
     fname, s, _, shape, dtype = tensor_info(name, weight_map)
     width = shape[1]
     bpe = 2 if dtype == "BF16" else 4
@@ -83,11 +83,11 @@ def main():
     w = Writer("pg_slices")
     doc = {"model": PG_ID}
 
-    # Checkpoint'te lm_head yok: weight tying'in kanıtı
+    # There is no lm_head in the checkpoint: proof of weight tying
     doc["has_lm_head_key"] = any("lm_head" in k for k in weight_map)
     doc["num_keys"] = len(weight_map)
 
-    # 1) Dil modelinin bütün RMSNorm ağırlıkları: 18 katman x (input, post_attention) + son norm
+    # 1) All RMSNorm weights of the language model: 18 layers x (input, post_attention) + final norm
     n_layers = 18
     norms = {"input_layernorm": [], "post_attention_layernorm": []}
     for i in range(n_layers):
@@ -101,9 +101,9 @@ def main():
         "post_attention_layernorm": w.arr(np.stack(norms["post_attention_layernorm"])),
         "final": w.arr(final),                                                   # [2048]
     }
-    print("norm ağırlıkları alındı")
+    print("fetched norm weights")
 
-    # 2) Embedding satırları: örnek token'lar + rastgele bir örneklem (norm dağılımı için)
+    # 2) Embedding rows: example tokens + a random sample (for the norm distribution)
     words = ["<bos>", "<pad>", "<eos>", "<image>", "\n", "caption", "answer", "ocr", "detect", "segment",
              " en", " tr", " kedi", " cat", " dog", " köpek", " tabela", " sign", " acil", " çıkış",
              " İstanbul", " the", " a", ",", ".", "<loc0000>", "<loc0512>", "<loc1023>", "<seg000>", "<seg127>"]
@@ -126,24 +126,24 @@ def main():
     doc["embed_named_rows"] = w.arr(rows[: len(named)], "f32")     # [n, 2048]
     doc["embed_sample_ids"] = sample_ids
     doc["embed_sample_rows"] = w.arr(rows[len(named):], "f16")     # [400, 2048]
-    print(f"{len(all_ids)} embedding satırı alındı")
+    print(f"fetched {len(all_ids)} embedding rows")
 
-    # 3) SigLIP konum embedding'i [256, 1152] ve yama filtreleri [1152, 3, 14, 14]
+    # 3) SigLIP position embedding [256, 1152] and patch filters [1152, 3, 14, 14]
     pos, _ = fetch("vision_tower.vision_model.embeddings.position_embedding.weight", weight_map)
     pn = pos / np.linalg.norm(pos, axis=1, keepdims=True)
     doc["pos_shape"] = list(pos.shape)
     doc["pos_cos"] = w.arr(pn @ pn.T, "f16")                                    # [256, 256]
     patch_w, _ = fetch("vision_tower.vision_model.embeddings.patch_embedding.weight", weight_map)
     doc["patch_w_shape"] = list(patch_w.shape)
-    # En büyük normlu 64 filtre, görselleştirme için
+    # The 64 filters with the largest norm, for visualization
     order = np.argsort(-np.linalg.norm(patch_w.reshape(len(patch_w), -1), axis=1))[:64]
     doc["patch_filters_idx"] = order.tolist()
     doc["patch_filters"] = w.arr(patch_w[order], "f32")                        # [64, 3, 14, 14]
     pb, _ = fetch("vision_tower.vision_model.embeddings.patch_embedding.bias", weight_map)
     doc["patch_bias_first"] = small_list(pb[:8])
-    print("SigLIP embedding parçaları alındı")
+    print("fetched SigLIP embedding slices")
 
-    # 4) Projektör: ağırlık [2048, 1152] sadece istatistik, bias tam
+    # 4) Projector: statistics only for the [2048, 1152] weight, the full bias
     pw, _ = fetch("multi_modal_projector.linear.weight", weight_map)
     pbias, _ = fetch("multi_modal_projector.linear.bias", weight_map)
     doc["proj_shape"] = list(pw.shape)
@@ -151,7 +151,7 @@ def main():
     hist, edges = np.histogram(pw, bins=80)
     doc["proj_hist"] = {"counts": hist.tolist(), "edges": small_list(edges)}
     doc["proj_bias"] = w.arr(pbias)
-    print("projektör alındı")
+    print("fetched projector")
 
     w.save(doc)
 
