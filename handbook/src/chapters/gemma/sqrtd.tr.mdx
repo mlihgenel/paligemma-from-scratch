@@ -16,7 +16,7 @@ import { Link } from "react-router-dom";
   { match: "hidden_states = inputs_embeds", title: "Giriş", text: <>Gelen tensör <S s="B, T, D" />. Metin token'ları embedding tablosundan, görsel token'lar projektörden geliyor ve <code>paligemma.py</code>'de birleştirilmiş durumdalar. PaliGemma'da bu tensörün metin satırları <b>zaten ×√d</b> yapılmış olarak geliyor.</> },
   { match: "scale_embeddings: bool = True", title: "Ölçekleme açık mı?", text: <>Varsayılan <code>True</code>: saf Gemma kullanımında (<code>check_gemma.py</code>) bütün girdi √d ile çarpılıyor. PaliGemma <code>False</code> veriyor, çünkü ölçeği kendi içinde, yalnızca metne uyguladı. Yoksa görsel token'lar da çarpılırdı.</> },
   { match: "normalizer = torch.tensor", title: "√d, girdinin dtype'ında", text: <>√2048 = 45.2548… Tensör <code>hidden_states.dtype</code> ile kuruluyor. Model bf16'da çalışırken bu sayı <b>45.25</b>'e yuvarlanıyor. Bilerek böyle: HF de aynısını yapıyor. Aşağıdaki "bf16" bölümüne bak.</> },
-  { match: "hidden_states = hidden_states * normalizer", title: "Ölçekleme", text: <>Her eleman 45.25 ile çarpılıyor. Şekil aynı kalıyor: <S s="B, T, D" />. Bu satırdan sonra akış otoyola giriyor (<Link to="/gemma/akis">4.2</Link>).</> },
+  { match: "hidden_states = hidden_states * normalizer", title: "Ölçekleme", text: <>Her eleman 45.25 ile çarpılıyor. Şekil aynı kalıyor: <S s="B, T, D" />. Bu satırdan sonra akış otoyola giriyor (<Link to="/gemma/residual">4.2</Link>).</> },
   { match: "for decoder_layer in self.layers", title: "Katmanlar", text: <>Ölçeklenmiş akış 18 katmandan geçiyor.</> },
 ]} />
 
@@ -24,7 +24,7 @@ import { Link } from "react-router-dom";
   { match: "normalizer = torch.tensor", title: "√d, metnin dtype'ında", text: <>Aynı √2048, bu kez <code>inputs_embeds.dtype</code> ile: bf16 modelde 45.25. HF'nin ölçekli embedding tablosuyla aynı işlem.</> },
   { match: "scaled_text_embeds = inputs_embeds * normalizer", title: "Yalnızca metin ×√d", text: <>Tablodan gelen <S s="B, T, 2048" ax="B,T,D" /> embedding'ler çarpılıyor. <code>&lt;image&gt;</code> konumlarının satırları da çarpılıyor ama birazdan üzerlerine yazılacak.</> },
   { match: "final_embedding = torch.where(text_mask_expanded, scaled_text_embeds", title: "Ölçeklenmiş metin yerleşiyor", text: <>Metin konumlarına <b>ölçeklenmiş</b> embedding'ler kopyalanıyor.</> },
-  { match: "masked_scatter(image_mask_expanded", title: "Görsel özellikler ölçeksiz yerleşiyor", text: <>Projektör çıktısı <S s="B, 256, 2048" ax="B,T,D" /> hiçbir işlemden geçmeden <code>&lt;image&gt;</code> konumlarına sırayla yazılıyor. Animasyonu <Link to="/kopru#birlestirme">Bölüm 3</Link>'te.</> },
+  { match: "masked_scatter(image_mask_expanded", title: "Görsel özellikler ölçeksiz yerleşiyor", text: <>Projektör çıktısı <S s="B, 256, 2048" ax="B,T,D" /> hiçbir işlemden geçmeden <code>&lt;image&gt;</code> konumlarına sırayla yazılıyor. Animasyonu <Link to="/bridge#merge">Bölüm 3</Link>'te.</> },
 ]} />
 
 ## √d dört adımda
@@ -36,13 +36,13 @@ Tartışmaya ölçümle başlayalım. Aşağı kaydırdıkça figür değişiyor
 **Gerçek embedding'ler küçük mü?** Gerçek checkpoint'ten okunan satırlarda eleman başına std ≈ 0.19, satır normu ≈ 8. Kutuyu işaretleyip **×√2048** uygula: satır normu ≈ 360'a çıkıyor, eleman başına std ≈ 8.4. Mor çubuklar `<loc>`/`<seg>` token'ları: normları ≈ 1.
 </Step>
 <Step>
-**Ölçek dengesi.** Akışa önce embedding giriyor, sonra her katman bir güncelleme ekliyor. Kaydırıcıyla embedding'in ölçeğini değiştir. s küçükse embedding ilk katmanlarda boğuluyor (cos ↓). s büyükse katmanlar akışı değiştiremiyor. Kesikli çizgiler senin kodunla gerçekten ölçüldü.
+**Ölçek dengesi.** Akışa önce embedding giriyor, sonra her katman bir güncelleme ekliyor. Kaydırıcıyla embedding'in ölçeğini değiştir. s küçükse embedding ilk katmanlarda boğuluyor (cos ↓). s büyükse katmanlar akışı değiştiremiyor. Kesikli çizgiler projenin koduyla gerçekten ölçüldü.
 </Step>
 <Step>
 **Eski yol: görsel token'ın gidiş-dönüşü.** Kodun ilk sürümü görsel özelliği önce ÷√d, sonra Gemma'nın ×√d'siyle çarpıyordu: matematikte net etki ×1. Değer kaydırıcısıyla dene: float32'de fark ~1e-7. bf16'da ise bazı değerler aynen dönüyor, bazıları ~%0.5 sapıyor. Yolu bu yüzden kısalttık (aşağıdaki bulgu).
 </Step>
 <Step>
-**Neden 45.25?** bf16, float32'nin üst 16 biti: üs (aralık) aynı, mantis (hassasiyet) 23 bitten 7 bite iniyor. √2048 = 45.2548… en yakın bf16 değerine, **45.25**'e yuvarlanıyor. Senin `normalizer`'ın `hidden_states.dtype` ile kurulduğu için model bf16'dayken 45.25 ile çarpıyor, tıpkı HF gibi.
+**Neden 45.25?** bf16, float32'nin üst 16 biti: üs (aralık) aynı, mantis (hassasiyet) 23 bitten 7 bite iniyor. √2048 = 45.2548… en yakın bf16 değerine, **45.25**'e yuvarlanıyor. Koddaki `normalizer` `hidden_states.dtype` ile kurulduğu için model bf16'dayken 45.25 ile çarpıyor, tıpkı HF gibi.
 </Step>
 </Scrolly>
 
@@ -58,7 +58,7 @@ Bazı anlatımlarda "embedding'ler küçük başlatıldığı için √d ile ça
 
 ## Neden çarpıyoruz? Ölçek dengesi
 
-Akışa iki tür şey giriyor: başta embedding, sonra her katmanın güncellemeleri (<Link to="/gemma/akis">4.2</Link>). RMSNorm sayesinde dallar akışın büyüklüğünü görmüyor, hep norm'lu bir kopyayla çalışıyor. **Toplama ise ölçeğe duyarlı.** Akış 3 birim büyüklüğündeyse ve her katman 5 birimlik bir güncelleme ekliyorsa, embedding'in taşıdığı bilgi ilk katmanda boğuluyor.
+Akışa iki tür şey giriyor: başta embedding, sonra her katmanın güncellemeleri (<Link to="/gemma/residual">4.2</Link>). RMSNorm sayesinde dallar akışın büyüklüğünü görmüyor, hep norm'lu bir kopyayla çalışıyor. **Toplama ise ölçeğe duyarlı.** Akış 3 birim büyüklüğündeyse ve her katman 5 birimlik bir güncelleme ekliyorsa, embedding'in taşıdığı bilgi ilk katmanda boğuluyor.
 
 
 
@@ -79,7 +79,7 @@ Bu iki rol farklı büyüklükler istiyor. Çıkışta tablonun küçük kalmas�
 
 SigLIP + projektör çıktısı zaten akışın beklediği ölçekte eğitildi: PaliGemma'da görüntü tarafı ve dil tarafı birlikte ayarlandı, projektör çıktısı Gemma'nın içinde olduğu gibi kullanılıyor. Google'ın orijinal (big_vision) implementasyonunda √d çarpımı sadece **metin** embedding'lerine uygulanıyor, görsel token'lar akışa olduğu gibi giriyor. Kurulu `transformers` 5.x'te de ölçek `GemmaTextScaledWordEmbedding` içinde, yani yalnızca tablodan gelen metne uygulanıyor.
 
-Senin kodun artık aynısını yapıyor:
+Projenin kodu da aynısını yapıyor:
 
 1. `_merge_input_ids_with_image_features` **metin** embedding'lerini √d ile çarpıyor (`scaled_text_embeds`), görsel özellikleri olduğu gibi `masked_scatter` ile yerleştiriyor.
 2. `PaliGemma.forward` dil modelini `scale_embeddings=False` ile çağırıyor, yani `GemmaModel` diziyi ikinci kez çarpmıyor.
@@ -111,7 +111,7 @@ Yani gerçek modelde de logit'ler HF ile <b>birebir</b>. Teşhis doğrulandı: a
 
 Peki `normalizer`'ı farklı kursan ne olur? Hepsi bf16 bir tensörle çarpılıyor ve sonuç yine bf16 çıkıyor, ama ara hesap farklı:
 
-<Fig caption={<><b>Aynı bf16 girdi, üç farklı normalizer.</b> Python float ya da float32 tensörle çarpınca PyTorch çarpımı daha yüksek hassasiyette (45.2548 ile) yapıp sonra yuvarlıyor. Senin kodun ve HF ise 45.25 ile çarpıyor. Elemanların ~%2.6'sı 1 ulp farklı çıkıyor. <code>check_gemma.py</code>'deki <code>exact=True</code> türü bir karşılaştırma bunu yakalar.</>}>
+<Fig caption={<><b>Aynı bf16 girdi, üç farklı normalizer.</b> Python float ya da float32 tensörle çarpınca PyTorch çarpımı daha yüksek hassasiyette (45.2548 ile) yapıp sonra yuvarlıyor. Projenin kodu ve HF ise 45.25 ile çarpıyor. Elemanların ~%2.6'sı 1 ulp farklı çıkıyor. <code>check_gemma.py</code>'deki <code>exact=True</code> türü bir karşılaştırma bunu yakalar.</>}>
 <NormalizerVariants />
 </Fig>
 

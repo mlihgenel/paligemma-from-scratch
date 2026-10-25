@@ -1,0 +1,84 @@
+import { Callout, Fig, Predict, S, Impact } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { BreakIt } from "../../components/misc";
+import { LayerFlow, SandwichCompare, NormSwapStats } from "./w/Layer";
+import { CodeLines } from "../../components/CodeLines";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { Link } from "react-router-dom";
+
+# GemmaDecoderLayer
+
+<p className="lead">The layer itself computes nothing: it calls four submodules in the right order and does two additions. All the subtlety is in the order and the names.</p>
+
+<CodeWalk file="gemma.py" symbol="GemmaDecoderLayer" notes={[
+  { match: "def __init__(self, config: GemmaConfig, layer_idx: int)", title: "layer_idx", text: <>Passed to attention: the KV cache stores each layer's K/V under this number (<Link to="/gemma/kv-cache">4.12</Link>). In Gemma 2 it also decides whether the layer uses a sliding window or global attention: even/odd layers.</> },
+  { match: "self.self_attn = GemmaAttention(config, layer_idx)", title: "attention", text: <>The name has to be <code>self_attn</code>: the HF keys are <code>layers.N.self_attn.q_proj.weight</code>. Its inside is in <Link to="/gemma/attention">4.11</Link>.</> },
+  { match: "self.mlp = GemmaMLP(config)", title: "mlp", text: <>Keys like <code>layers.N.mlp.gate_proj.weight</code>.</> },
+  { match: "self.input_layernorm = GemmaRMSNorm", title: "the norm before attention", text: <>The name comes from Llama. It normalizes the block's <b>input</b>.</> },
+  { match: "self.post_attention_layernorm = GemmaRMSNorm", title: "a misleading name", text: <>It comes "after attention", but it is applied to the <b>stream</b>, not to attention's output, and becomes the MLP's input. See the Gemma 2 comparison below.</> },
+  { match: "def forward(", title: "the forward signature", text: <>The stream, the RoPE table <code>(cos, sin)</code>, the mask, and an optional KV cache. Attention needs to know the token positions and who may look at whom. The MLP and the norms do not use these; they are only passed on to attention.</> },
+]} />
+
+## Line by line
+
+The forward code is on the right, the flow diagram below it. As you scroll the active line moves on and shows what the <code>hidden_states</code> variable <b>holds at that moment</b>. The same name carries three different meanings.
+
+<Scrolly label="GemmaDecoderLayer.forward" figure={(s) => (
+  <div>
+    <CodeLines file="gemma.py" symbol="GemmaDecoderLayer.forward" maxHeight={300} active={[["def forward"], ["residual = hidden_states::0"], ["self.input_layernorm(hidden_states)"], ["self.self_attn(hidden_states,"], ["hidden_states = residual + hidden_states::0"], ["residual = hidden_states::1"], ["self.post_attention_layernorm(hidden_states)"], ["self.mlp(hidden_states)"], ["hidden_states = residual + hidden_states::1"]][s]} />
+    <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "auto 1fr auto", gap: "6px 14px", fontSize: 14, alignItems: "baseline" }}>
+      <span className="mono" style={{ color: "var(--fg-muted)" }}>hidden_states</span>
+      <b>{["the stream itself", "the stream itself", "a normalized copy", "the attn branch output", "the stream (updated)", "the stream itself", "a normalized copy", "the mlp branch output", "the stream (updated)"][s]}</b>
+      <S s="B, T, 2048" ax="B,T,D" />
+      <span className="mono" style={{ color: "var(--fg-muted)" }}>residual</span>
+      <b>{s === 0 ? "—" : s <= 4 ? "the stream as it came in" : "the stream after attn"}</b>
+      <S s="B, T, 2048" ax="B,T,D" />
+    </div>
+  </div>
+)}>
+<Step>The layer takes <S s="B, T, D" /> and returns the same shape. Besides the stream it gets the RoPE table, the mask and an optional KV cache, all for attention only.</Step>
+<Step>`residual = hidden_states`: a copy of the stream is set aside **before the norm**. In Python this is not a copy but a second name for the same tensor. The next lines create new tensors, so that is fine.</Step>
+<Step>`input_layernorm`: now `hidden_states` is no longer the stream but a **normalized copy**. The stream waits in `residual`.</Step>
+<Step>`self_attn`: the branch's computation. This is where tokens see each other (<Link to="/gemma/attention">4.11</Link>). The output has the same shape as the input, so it can be added to the stream.</Step>
+<Step>`residual + hidden_states`: the branch output is **added** to the stream. `hidden_states` is the stream again, in its updated form.</Step>
+<Step>The same pattern for the MLP block: first the stream goes into `residual` again.</Step>
+<Step>`post_attention_layernorm`: despite the name, the norm at the MLP's **input**.</Step>
+<Step>`mlp`: GeGLU. Nothing mixes across tokens (<Link to="/gemma/geglu">4.5</Link>).</Step>
+<Step>The second addition. The output has the same shape as the input, ready for the next layer.</Step>
+</Scrolly>
+
+<Predict q="In how many different 'meanings' is the hidden_states variable used during forward?">
+Three: (1) the stream itself (at the input and after every ⊕), (2) a normalized copy of the stream, (3) a branch output (attn or mlp). In Python they all share one name. While reading, asking "what does this variable hold right now?" is the best way to catch bugs. HF uses this style too. Weights are matched by attribute name, not by local variable names, so renaming local variables would be harmless.
+</Predict>
+
+## Mixing up the norms
+
+Both norms are the same class with the same shape. Swapping them is a one-word bug. With zero-initialized weights the two norms behave **exactly the same**, so the bug is invisible.
+
+<BreakIt title="swap input_layernorm and post_attention_layernorm"
+  good={`hidden_states = self.input_layernorm(hidden_states)          # ← attn input
+...
+hidden_states = self.post_attention_layernorm(hidden_states)  # ← mlp input`}
+  bad={`hidden_states = self.post_attention_layernorm(hidden_states)  # ← wrong
+...
+hidden_states = self.input_layernorm(hidden_states)          # ← wrong`}
+  result={(b) => b ? <NormSwapStats broken={b} /> : <p className="small muted" style={{margin: 0}}>Flip the switch to measure the difference in both cases.</p>} />
+
+That is the reason for these lines in <code>check_gemma.py</code>:
+
+```python
+# Randomize the norm weights. Left at zero, both norms behave the same and code that
+# swaps input_layernorm and post_attention_layernorm would still pass
+hf.input_layernorm.weight.normal_()
+hf.post_attention_layernorm.weight.normal_()
+```
+
+## What changes in Gemma 2?
+
+<Fig caption={<><b>The same name, a different place.</b> In Gemma 2 the first thing to check is where each norm is applied.</>}>
+<SandwichCompare />
+</Fig>
+
+<Impact from="gemma.py: GemmaDecoderLayer.forward(hidden_states)" to="forward(hidden_states, position_embeddings, attention_mask, kv_cache)">
+With attention wired in, the <code>forward</code> signature grew, and the loop in <code>GemmaModel.forward</code> passes the cos/sin table, the mask and the cache to every layer. That is why <Link to="/gemma/model">4.7</Link> uses <code>nn.ModuleList</code> and not <code>nn.Sequential</code>.
+</Impact>

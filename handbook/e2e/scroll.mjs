@@ -1,4 +1,4 @@
-// Viewport görüntüleri farklı scroll konumlarında: node e2e/scroll.mjs <klasör> <yol> <y1,y2,...> [--dark] [--w=1440]
+// Viewport screenshots at several scroll positions: node e2e/scroll.mjs <dir> <path> <y1,y2,...> [--dark] [--w=1440]
 import { chromium } from "@playwright/test";
 const [out, path, ys, ...rest] = process.argv.slice(2);
 const dark = rest.includes("--dark");

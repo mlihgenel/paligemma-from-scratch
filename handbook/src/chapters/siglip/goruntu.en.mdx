@@ -1,0 +1,89 @@
+import { Callout, ConceptQ, Fig, S, Note, Predict } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { ManimVideo } from "../../components/misc";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { PreprocFigure, PatchExplorer, FlattenScene, PosEmbedExplorer, ShuffleDemo } from "./Patch";
+import { Link } from "react-router-dom";
+
+# From image to patches
+
+<p className="lead">A photo becomes 256 tokens in three steps: preprocessing (pixels → a tensor in the range [−1, 1]), patch extraction (Conv2d) and adding positions. All of it lives in the project's <code>processing.py</code> and its <code>SiglipVisionEmbeddings</code> class.</p>
+
+## Preprocessing
+
+<Scrolly label="process_images, step by step" figure={(s) => <PreprocFigure step={s} />}>
+<Step>**Raw photo.** <S s="H, W, 3" ax=",,C" />, uint8, values 0–255. The histogram shows the three channels.</Step>
+<Step>**`resize` (bicubic, 224 × 224).** A non-square photo is not cropped but **squeezed**: the aspect ratio is lost. PaliGemma was trained this way, so we must do the same. `resample=3` = bicubic.</Step>
+<Step>**`rescale(1/255)`**: the same histogram, now in [0, 1]. The dtype is float32 from here on.</Step>
+<Step>**`normalize(mean=0.5, std=0.5)`**: (x − 0.5) / 0.5 gives the range **[−1, 1]**. Not the ImageNet mean: SigLIP's `preprocessor_config.json` has mean = std = 0.5. With the wrong values the model would see a "washed out" or "overexposed" image.</Step>
+<Step>**`transpose(2, 0, 1)`**: HWC → CHW. Conv2d expects channels on the first axis: <S s="3, 224, 224" ax="C,," />. With the batch axis: <S s="1, 3, 224, 224" ax="B,C,," />.</Step>
+</Scrolly>
+
+<CodeWalk file="processing.py" symbol="process_images" notes={[
+  { match: "images = [resize(image=image", title: "resize", text: <>Mind the order of PIL's <code>resize((width, height))</code>: width first. The <code>size</code> parameter is (height, width).</> },
+  { match: "images = [np.array(image)", title: "to numpy", text: <>The PIL image becomes a <S s="H, W, 3" ax=",,C" /> uint8 array.</> },
+  { match: "images = [rescale(image", title: "÷ 255", text: <>This is where it becomes float32.</> },
+  { match: "images = [normalize(image", title: "(x − 0.5) / 0.5", text: <>The mean and std lists have size <S s="3" ax="C" /> and broadcast over the last axis.</> },
+  { match: "images = [image.transpose(2, 0, 1)", title: "HWC → CHW", text: <>PyTorch's Conv2d layout.</> },
+]} />
+
+<a id="conv" />
+
+## Patch extraction: Conv2d
+
+A Conv2d with `kernel_size = stride = 14` means: the image is cut into non-overlapping 14 × 14 squares, and the **same** linear map is applied to each square. Each filter is a weight of 14 × 14 × 3 = 588 numbers, multiplied elementwise with the patch and summed.
+
+<Fig wide caption={<><b>Patch explorer, with the real weights.</b> Hover a patch in the image on the left: the middle shows its pixels and the dot product with the selected filter. Pick another filter from the gallery: the map on the right is that filter's response on every patch, i.e. a single channel of the Conv2d output. Some filters respond to edges, some to color, some to text.</>}>
+<PatchExplorer />
+</Fig>
+
+<ManimVideo scene="ConvAsPatchLinear" caption="kernel = stride: the same linear map for every patch (35 s)" />
+
+## flatten and transpose: patches become tokens
+
+The Conv2d output is <S s="1, 1152, 16, 16" ax="B,D,," />: 1152 channels, each a 16 × 16 map. The transformer expects <S s="1, 256, 1152" ax="B,T,D" />: 256 tokens of 1152 numbers each. Two lines do this conversion.
+
+<Scrolly label="[C, H, W] → [H·W, C]" figure={(s) => <FlattenScene step={s} />}>
+<Step>**<S s="C, H, W" ax="D,," />**: each color is a channel (1152 in reality). Each channel is an H × W map. Hover a cube to see which channel and which patch it is.</Step>
+<Step>**`flatten(start_dim=2)`**: each map is unrolled into a single row. Row = channel, column = patch index: <S s="C, H·W" ax="D,T" />. Patches are numbered row by row: (y, x) → y·W + x.</Step>
+<Step>**`transpose(1, 2)`**: rows and columns swap. Now every **row is a patch**, i.e. a token, carrying that token's C numbers: <S s="H·W, C" ax="T,D" />.</Step>
+</Scrolly>
+
+<Predict q="What would happen if you skipped flatten and reshaped the Conv2d output directly with view(1, 256, 1152)?">
+The shape would be right but the content <b>wrong</b>. In memory the data is laid out channel by channel: first the 256 values of channel 0, then channel 1… <code>view(1, 256, 1152)</code> would cut that sequence into chunks of 1152, so "token 0" would be the 256 values of channel 0 plus the first 896 values of channel 1. Meaningless. flatten first, then transpose: the only way that keeps the <i>meaning</i> of the axes.
+</Predict>
+
+<ManimVideo scene="FlattenTranspose" caption="flatten(2) + transpose(1, 2), tracking the elements (20 s)" />
+
+## The position embedding
+
+<Fig wide caption={<><b>The 256 position vectors of the real PaliGemma.</b> In the large grid on the left, each small square is one position's cosine similarity with all the other positions. Hover it to enlarge it on the right. The PaliGemma version of the famous figure from the ViT paper (Figure 7).</>}>
+<PosEmbedExplorer />
+</Fig>
+
+<Fig caption={<><b>What if there were no positions?</b> Shuffle the patches. To a person this is no longer a sign. To an encoder without a position embedding, there is no difference between the two sequences.</>}>
+<ShuffleDemo />
+</Fig>
+
+<CodeWalk file="siglip.py" symbol="SiglipVisionEmbeddings" notes={[
+  { match: "self.patch_embedding = nn.Conv2d(", title: "Conv2d", text: <>3 → 1152 channels, kernel = stride = 14. <code>padding="valid"</code>: no padding at the edges. 224 = 16 × 14 divides evenly, so no pixel is dropped. The weight is <S s="1152, 3, 14, 14" ax="D,C,," /> + bias.</> },
+  { match: "self.num_patches = (self.image_size // self.patch_size) ** 2", title: "256", text: <>(224 / 14)² = 256. 196 for siglip-base (16 px).</> },
+  { match: "self.position_embedding = nn.Embedding(", title: "learned positions", text: <>A table of 256 rows, each row a position's 1152-dim vector. Learned, not sinusoidal.</> },
+  { match: "self.register_buffer(", title: "register_buffer", text: <><code>position_ids</code> = [0, 1, …, 255]. Not a parameter (not learned), but it has to move with the model on <code>.to(device)</code>. <code>persistent=False</code>: it stays out of the <code>state_dict</code>, so it does not clash with the HF keys.</> },
+  { match: "patch_embeds = self.patch_embedding(pixel_values)", title: "1", text: <><S s="1, 3, 224, 224" ax="B,C,," /> → <S s="1, 1152, 16, 16" ax="B,D,," />.</> },
+  { match: "embeddings = patch_embeds.flatten(start_dim=2, end_dim=3)", title: "2", text: <><S s="1, 1152, 256" ax="B,D,T" />.</> },
+  { match: "embeddings = embeddings.transpose(1, 2)", title: "3", text: <><S s="1, 256, 1152" ax="B,T,D" />. Now a token sequence.</> },
+  { match: "embeddings = embeddings + self.position_embedding(self.position_ids)", title: "4", text: <><S s="1, 256, 1152" ax="B,T,D" /> + <S s="1, 256, 1152" ax="B,T,D" />. Elementwise addition.</> },
+]} />
+
+## Concept questions
+
+<ConceptQ n={1} q="The Conv2d output is [B, 768, 14, 14]. Why must the tensor entering the transformer be [B, 196, 768]?">
+A transformer processes a <b>sequence</b>: <S s="B, T, D" />, one row per token and D numbers per row. Attention mixes across tokens (the T axis), Linear layers transform the last axis (D). In the conv output a "token" is still spread over two spatial axes (14 × 14) and the channel axis sits in the middle. flatten folds the two spatial axes into a single T = 196 axis, and transpose moves D to the end.
+</ConceptQ>
+<ConceptQ n={2} q="ViT has a [CLS] token, SigLIP/PaliGemma does not. Why is it not needed?">
+In ViT, [CLS] is a single vector that summarizes the whole image for classification. SigLIP's own image-text loss uses an "attention pooling" head (MAP head) instead. PaliGemma drops that head too (<code>check_encoder.py</code> skips the <code>head.*</code> keys), because the language model does not get one summary but <b>all 256 tokens</b>. Gemma chooses which patches to look at through attention.
+</ConceptQ>
+<ConceptQ n={3} q="What would the model lose without the position embedding? How would the output change if you shuffled the patches?">
+Attention and the MLP are permutation-equivariant: shuffle the input and the output comes back shuffled the same way. Without a position embedding the encoder loses "which patch is where" entirely, and the image becomes a bag of patches. In the shuffle experiment above, the two sequences contain the same set of tokens. The position embeddings are what make them different.
+</ConceptQ>

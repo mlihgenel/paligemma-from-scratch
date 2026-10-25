@@ -54,7 +54,7 @@ Bu satırın iki önemli sonucu var.
   { match: "self.input_layernorm(hidden_states)", title: "Dal: norm", text: <>Bu satırdan sonra <code>hidden_states</code> artık akışın kendisi değil, normalize edilmiş bir kopya. Akış <code>residual</code> değişkeninde bekliyor. Şekil değişmiyor: <S s="B, T, D" />.</> },
   { match: "self.self_attn(hidden_states,", title: "Dal: attention", text: <>Token'lar arası bilgi buradan geçiyor: bu dal, akıştaki her token'ın başka token'lardan okuyup akışa yazdığı tek yer. Şekil değişmiyor: <S s="B, T, D" />. Dal norm'lu kopyanın yanında RoPE tablosunu ve maskeyi de alıyor (<Link to="/gemma/attention">4.11</Link>).</> },
   { match: "hidden_states = residual + hidden_states", title: "Yazma: akışa ekle", text: <>Otoyolun ⊕ noktası. Dalın çıktısı akışa toplanıyor. İki tensör de <S s="B, T, D" />, eleman eleman toplama.</> },
-  { match: "self.post_attention_layernorm(hidden_states)", title: "İkinci dal: norm", text: <>Aynı desen, bu kez MLP için. Adı yanıltıcı: "post attention" denmesinin nedeni attention'dan <i>sonra</i> gelmesi, ama aslında MLP'nin <i>girişindeki</i> norm. Bkz. <Link to="/gemma/katman">4.6</Link>.</> },
+  { match: "self.post_attention_layernorm(hidden_states)", title: "İkinci dal: norm", text: <>Aynı desen, bu kez MLP için. Adı yanıltıcı: "post attention" denmesinin nedeni attention'dan <i>sonra</i> gelmesi, ama aslında MLP'nin <i>girişindeki</i> norm. Bkz. <Link to="/gemma/layer">4.6</Link>.</> },
   { match: "hidden_states = self.mlp(hidden_states)", title: "Dal: MLP", text: <>GeGLU. Her token ayrı işleniyor. Bkz. <Link to="/gemma/geglu">4.5</Link>.</> },
   { match: "return hidden_states", title: "Çıkış", text: <>Girişle aynı şekil <S s="B, T, D" />. Bir sonraki katman bunu aynen alıyor. 18 katman böyle zincirleniyor.</> },
 ]} />
@@ -75,7 +75,7 @@ hidden_states = residual + hidden_states`}
   result={(b) => b ? (
     <div><StreamCompare show={["normal", "residual_after_norm"]} /><p className="small" style={{marginTop: 8}}>Akış her alt blokta yeniden normalize ediliyor. Önceki katmanların yazdıkları büyüklük bilgisiyle birlikte siliniyor. Embedding'e benzerlik ilk iki katmanda <b>0.2</b>'ye çöküyor. Bu, fiilen <b>post-norm</b> mimarisi (mor çizgi ile neredeyse aynı).</p></div>
   ) : (
-    <div><StreamCompare show={["normal"]} /><p className="small" style={{marginTop: 8}}>Senin kodunda akış, katmanlar boyunca embedding'deki bilgiyi yavaş yavaş dönüştürüyor: benzerlik 1.0'dan 0.84'e iniyor, norm 48'den 57'ye çıkıyor.</p></div>
+    <div><StreamCompare show={["normal"]} /><p className="small" style={{marginTop: 8}}>Doğru kodda akış, katmanlar boyunca embedding'deki bilgiyi yavaş yavaş dönüştürüyor: benzerlik 1.0'dan 0.84'e iniyor, norm 48'den 57'ye çıkıyor.</p></div>
   )}
 />
 

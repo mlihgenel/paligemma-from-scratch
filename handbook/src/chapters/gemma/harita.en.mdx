@@ -1,0 +1,63 @@
+import { Callout, Fig, S, Predict } from "../../components/ui";
+import { ShapeJourney } from "./w/Shapes";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { ModuleTreeView, ParamShare } from "./w/Tree";
+import { Link } from "react-router-dom";
+
+# Map of Gemma
+
+<p className="lead">The first half of this part covers Gemma's pieces other than attention; the later pages cover attention and the KV cache. Before the details, let's see where every piece sits and where the model's weight is concentrated.</p>
+
+Gemma's job in one sentence: take <S s="B, T" /> token ids and turn them into <S s="B, T, V" /> logits. In between, every token is carried as a <S s="D" /> vector through 18 layers. In PaliGemma, 256 of the input tokens come from the image.
+
+## The module tree
+
+The tree below is the project's `gemma.py` and `paligemma.py` classes built with the **real config**. The input/output shapes were captured during a real forward pass (260 tokens: 256 image + `<bos>` + "caption en" + `\n`). Click a node.
+
+<Fig wide caption={<><b>The project's model, on the meta device.</b> Keys marked ✓ also exist in the real checkpoint, so the weights slot straight in when loaded. The four <code>Linear</code>s under <code>self_attn</code> match the checkpoint too. The only ○ is <code>lm_head.weight</code>: it is not in the checkpoint because of tying (<Link to="/gemma/tying">4.8</Link>).</>}>
+<ModuleTreeView />
+</Fig>
+
+## Where are the parameters?
+
+<Fig caption={<><b>Most of the weight is in the MLP.</b> The 18 MLPs are 62% of the total. The embedding table (= lm_head, see <Link to="/gemma/tying">4.8</Link>) is close to a fifth. The 18 attention blocks are about 6%: thanks to MQA, k_proj and v_proj are tiny. The 37 RMSNorms add up to only 75 thousand.</>}>
+<ParamShare />
+</Fig>
+
+<Predict q="Each of the 18 layers has 3 Linears: gate, up, down, each 2048 × 16384. How many parameters does one layer's MLP have?" hint="no bias">
+3 × 2048 × 16384 = <b>100,663,296</b> ≈ 100.7 M. 1.81 B over 18 layers. The RMSNorms have 2048 parameters each, a rounding error next to that.
+</Predict>
+
+## A token sequence's journey
+
+Everything that happens to the tensor in one forward pass on the Gemma side. The rectangle's height is the sequence length T, its width the last axis (log scale).
+
+<Scrolly label="Gemma forward, shapes" figure={(s) => <ShapeJourney step={s} />}>
+<Step>**`input_ids`** <S s="1, 260" ax="B,T" />. 256 `<image>` placeholders (blue) and 4 text tokens (green). Only integers so far.</Step>
+<Step>**`embed_tokens`**: each id picks a row of the table and the last axis becomes 2048. This is indexing, not math. The `<image>` positions go through the table too, but they will be overwritten shortly.</Step>
+<Step>**Merge** (`paligemma.py`): the text embeddings are multiplied by √d = 45.25, and the features from the projector are written **unscaled** into the 256 image positions (purple). The shape does not change (<Link to="/gemma/sqrt-d">4.3</Link>).</Step>
+<Step>**`GemmaModel` input**: the sequence arrives already scaled (`scale_embeddings=False`) and is not multiplied again. When Gemma is used on its own, this multiplication is the first thing `GemmaModel.forward` does.</Step>
+<Step>**18 decoder layers**: each takes <S s="B, T, D" /> and returns <S s="B, T, D" />. The layers read from and write to the same stream (<Link to="/gemma/residual">4.2</Link>).</Step>
+<Step>**Final norm**: the stream is normalized once (<Link to="/gemma/rmsnorm">4.4</Link>).</Step>
+<Step>**lm_head**: the last axis widens from 2048 to **257216**, a score for every vocabulary token at every position. In float32, 260 × 257216 × 4 bytes ≈ 255 MB (<Link to="/gemma/tying">4.8</Link>).</Step>
+</Scrolly>
+
+<Callout kind="ozet">
+The shape changes in only two places: at the input (id → vector) and at the output (vector → vocabulary scores). All 18 layers in between go from <S s="B, T, D" /> to <S s="B, T, D" />. That is no accident: every layer reads from and writes to the same **stream**. That is the topic of the next page.
+</Callout>
+
+## Pages in this part
+
+| | Topic | In the code |
+|---|---|---|
+| <Link to="/gemma/residual">4.2</Link> | The residual stream ("highway"), pre-norm | `GemmaDecoderLayer.forward` |
+| <Link to="/gemma/sqrt-d">4.3</Link> | The √d scale, why image tokens are not multiplied, bf16 | `GemmaModel.forward`, `_merge_input_ids_with_image_features` |
+| <Link to="/gemma/rmsnorm">4.4</Link> | RMSNorm: (1+w), float32, keepdim, order of operations | `GemmaRMSNorm` |
+| <Link to="/gemma/geglu">4.5</Link> | GeGLU: gate/up/down | `GemmaMLP` |
+| <Link to="/gemma/layer">4.6</Link> | The skeleton of the decoder layer | `GemmaDecoderLayer` |
+| <Link to="/gemma/model">4.7</Link> | ModuleList, the final norm | `GemmaModel` |
+| <Link to="/gemma/tying">4.8</Link> | Weight tying, `logits.float()` | `GemmaForCausalLM`, `tie_weights` |
+| <Link to="/gemma/rope">4.9</Link> | RoPE: position by rotation, rotate_half, float32 angles | `GemmaRotaryEmbedding`, `rotate_half`, `apply_rotary_pos_emb` |
+| <Link to="/gemma/mqa">4.10</Link> | MQA/GQA: 8 Q heads, 1 KV head, KV cache size | `repeat_kv` |
+| <Link to="/gemma/attention">4.11</Link> | Scores, 1/√head_dim, the causal mask, wiring into the layer | `GemmaAttention`, `make_causal_mask` |
+| <Link to="/gemma/kv-cache">4.12</Link> | KV cache: prefill, token-by-token generation, positions and masks | `KVCache`, `generate` |

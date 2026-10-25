@@ -1,0 +1,45 @@
+import { Callout, Fig, S, Note } from "../../components/ui";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { TourFigure, FreePlay } from "./Tour";
+import { ModuleTreeView } from "../gemma/w/Tree";
+import { Link } from "react-router-dom";
+
+# End to end: a photo's journey
+
+<p className="lead">A close-up of the landing animation. A photo of a street sign and a short prompt pass through PaliGemma with their real shapes. Scroll down: the scene takes you stop by stop. Hover the patches and tokens to see where they come from.</p>
+
+<Note label="Choice">You can pick another photo or prompt at the top right. The choice applies to the whole page.</Note>
+
+<Scrolly label="PaliGemma, end to end" figure={(s) => <TourFigure step={s} />}>
+<Step>**Raw photo.** The sign photo at its own size (e.g. 1280 × 1707). The model has not seen anything yet. This is just a uint8 array.</Step>
+<Step>**Preprocessing.** `process_images`: bicubic resize to 224 × 224, ÷255, then (x − 0.5) / 0.5 into the range [−1, 1], and HWC → CHW. A non-square photo is **squeezed**, not cropped.</Step>
+<Step>**Patches.** `Conv2d(kernel = stride = 14)` cuts the image into 16 × 16 = 256 non-overlapping patches. The **same** 588 → 1152 linear map is applied to every patch. Hover a patch to see its 14 × 14 pixels.</Step>
+<Step>**Token sequence.** `flatten(2)` and `transpose(1, 2)`: the patches are laid out row by row into a sequence of 256 tokens. The image is now a "sentence". The small square above each column is its patch.</Step>
+<Step>**+ position embedding.** A learned vector for its position is added to each token. Without it the model could not know where a patch is. The shape does not change: <S s="1, 256, 1152" ax="B,T,D" />.</Step>
+<Step>**SigLIP encoder × 27.** Attention without a mask: every patch sees every patch. The shape never changes; the content gets richer with "what is this patch part of?". `post_layernorm` comes at the very end.</Step>
+<Step>**Projector.** A single Linear: 1152 → 2048. The image tokens are moved to the language model's size (the columns grew and changed color).</Step>
+<Step>**Merge.** Prompt tokens come from the embedding table and are multiplied by √2048 = 45.25 (green, <Link to="/gemma/sqrt-d">4.3</Link>). The image features are written into the `<image>` positions in order, **unscaled**. The sequence is now 256 + text tokens long (<Link to="/bridge#merge">part 3</Link>).</Step>
+<Step>**Gemma decoder × 18.** Each layer adds two updates to the stream (attn + mlp). Tokens only see each other in attention: that is where the text tokens can read the image tokens. The mask is a prefix-LM mask: image and prompt see each other fully, the generated answer only looks back (<Link to="/bridge">3</Link>).</Step>
+<Step>**Final RMSNorm.** The stream, which grew over 18 layers, is normalized once before lm_head.</Step>
+<Step>**lm_head → logits.** For every position, a score for each of the 257216 tokens in the vocabulary. Generation only uses the scores of the **last** position: argmax → the next token.</Step>
+</Scrolly>
+
+<Callout kind="not" title="What is real here and what is not?">
+The images, the preprocessing and the tokens are real: they were produced with the project's <code>processing.py</code> and the PaliGemma tokenizer. The shapes come from a <code>meta</code> forward pass of the full-size model. The columns are only a representation and carry no values. For the model's real answers see the landing animation and the Colab notebook in the repo: with the real weights the code produces the same tokens as Hugging Face.
+</Callout>
+
+## Free mode
+
+<Fig wide caption={<><b>Free exploration.</b> Jump to any stop with the slider, rotate the scene, zoom in. Patches and tokens show their source on hover.</>}>
+<FreePlay />
+</Fig>
+
+## Where does the sequence length come from?
+
+The length depends on the prompt: `caption en` is 260 tokens, `ocr` 259, `answer tr Tabelada ne yazıyor?` ("what does the sign say?" in Turkish) 267. In all of them the first **256** tokens are the image. Then come `<bos>`, the pieces of the prompt and `\n`. Turkish words are split into several pieces ("Tabelada" → `▁T` `abel` `ada`): the Gemma tokenizer was trained mostly on English.
+
+## The whole model, class by class
+
+<Fig wide caption={<><b>PaliGemmaForConditionalGeneration</b>, from the root to the leaves. Every node shows the input/output shape captured from a real forward pass and its parameter count. The 27 SigLIP layers and the 18 Gemma layers share one structure, so only the first is expanded.</>}>
+<ModuleTreeView root="(root)" initialSel="multi_modal_projector" initialOpen={["(root)", "vision_tower", "vision_tower.vision_model", "vision_tower.vision_model.embeddings", "language_model", "language_model.model"]} />
+</Fig>

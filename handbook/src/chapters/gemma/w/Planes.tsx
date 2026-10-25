@@ -1,8 +1,10 @@
-// Mafs tabanlı 2D düzlemler (R3)
+// Mafs-based 2D planes
 import { Mafs, Coordinates, Plot, Point, Line, Text, useMovablePoint } from "mafs";
 import { geluErf, geluTanh, relu, silu } from "../../../lib/tensor";
+import { useT } from "../../../i18n";
 
 export function GeluPlane() {
+  const tr = useT();
   const p = useMovablePoint([-0.8, 0], { constrain: "horizontal", color: "var(--accent)" });
   const x = p.x;
   const vals = [
@@ -31,9 +33,9 @@ export function GeluPlane() {
           </div>
         ))}
         <div className="stat">
-          <div className="lbl">tanh − erf farkı</div>
+          <div className="lbl">{tr("tanh − erf difference", "tanh − erf farkı")}</div>
           <div className="val" style={{ color: Math.abs(diff) > 1e-5 ? "var(--bad)" : undefined }}>{diff.toExponential(1)}</div>
-          <div className="sub">atol = 1e-5'ten {Math.abs(diff) > 1e-5 ? "büyük → allclose düşer" : "küçük"}</div>
+          <div className="sub">{Math.abs(diff) > 1e-5 ? tr("larger than atol = 1e-5 → allclose fails", "atol = 1e-5'ten büyük → allclose düşer") : tr("smaller than atol = 1e-5", "atol = 1e-5'ten küçük")}</div>
         </div>
       </div>
     </div>

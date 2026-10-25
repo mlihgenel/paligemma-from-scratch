@@ -1,5 +1,10 @@
-// Etkileşim testleri: scrolly adımları, hücre hover'ı, 3D hover.
+// Interaction tests: scrolly steps, cell hover, 3D hover.
 import { expect, test } from "@playwright/test";
+
+// These interaction tests read the Turkish UI text, so they run with lang=tr (the English pages are smoke-tested in handbook.spec.ts)
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("lang", "tr"));
+});
 
 test("5.3 scrolly: kaydırınca adım ve figür değişiyor", async ({ page }) => {
   await page.goto("http://localhost:5173/#/gemma/rmsnorm", { waitUntil: "networkidle" });
@@ -55,7 +60,7 @@ for (const p of ["/goruntu", "/encoder", "/uctan-uca", "/kopru", "/gemma", "/gem
 }
 
 test("3: masked_scatter adımında görsel hücre hover'ı hedefini söylüyor", async ({ page }) => {
-  await page.goto("http://localhost:5173/#/kopru", { waitUntil: "networkidle" });
+  await page.goto("http://localhost:5173/#/bridge", { waitUntil: "networkidle" });
   const sc = page.locator(".scrolly").filter({ hasText: "_merge_input_ids_with_image_features" }).first();
   await sc.locator(".scrolly-step").nth(5).evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.4));
   await page.waitForTimeout(2500);
@@ -70,7 +75,7 @@ test("3: masked_scatter adımında görsel hücre hover'ı hedefini söylüyor",
 });
 
 test("2: yama gezgini hover ile yama ve token değişiyor", async ({ page }) => {
-  await page.goto("http://localhost:5173/#/goruntu", { waitUntil: "networkidle" });
+  await page.goto("http://localhost:5173/#/patches", { waitUntil: "networkidle" });
   const fig = page.locator(".fig").filter({ hasText: "Yama gezgini" });
   await fig.scrollIntoViewIfNeeded();
   await page.waitForTimeout(1500);
@@ -81,7 +86,7 @@ test("2: yama gezgini hover ile yama ve token değişiyor", async ({ page }) => 
 });
 
 test("3: kutu çizince <loc> token'ları güncelleniyor", async ({ page }) => {
-  await page.goto("http://localhost:5173/#/kopru", { waitUntil: "networkidle" });
+  await page.goto("http://localhost:5173/#/bridge", { waitUntil: "networkidle" });
   const fig = page.locator(".fig").filter({ hasText: "Bir kutu çiz" });
   await fig.scrollIntoViewIfNeeded();
   await page.waitForTimeout(1000);
@@ -90,7 +95,7 @@ test("3: kutu çizince <loc> token'ları güncelleniyor", async ({ page }) => {
   await page.mouse.move(b.x + 1, b.y + 1);
   await page.mouse.down();
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 5 });
-  // sürüklerken kutunun köşelerinde token'lar görünüyor
+  // while dragging, tokens show at the box corners
   await expect(fig.getByTestId("loc-tl")).toHaveText(/<loc000\d><loc000\d>/);
   await expect(fig.getByTestId("loc-br")).toHaveText(/<loc05\d\d><loc05\d\d>/);
   await page.mouse.up();
@@ -106,12 +111,12 @@ test("açılış: mimari animasyonu oynuyor, adıma tıklanıyor, kutu bölüme 
   await arch.getByRole("tab", { name: "Gemma" }).click();
   await expect(arch.locator(".arch-step-n")).toHaveText("5");
   await arch.locator("[aria-label=siglip]").click();
-  await expect(page).toHaveURL(/#\/buyuk-resim$/);
+  await expect(page).toHaveURL(/#\/big-picture$/);
   await expect(page.locator(".arch-mini")).toBeVisible();
 });
 
 test("2.2: filtre seçimi hover'da değil tıklamada değişiyor", async ({ page }) => {
-  await page.goto("http://localhost:5173/#/goruntu", { waitUntil: "networkidle" });
+  await page.goto("http://localhost:5173/#/patches", { waitUntil: "networkidle" });
   const gal = page.getByRole("listbox", { name: "filtre galerisi" });
   await gal.scrollIntoViewIfNeeded();
   await page.waitForTimeout(800);
@@ -130,7 +135,7 @@ test("4.4: laboratuvarda x × 10 çıktıyı değiştirmiyor", async ({ page }) 
   await btn.scrollIntoViewIfNeeded();
   await page.waitForTimeout(800);
   const root = btn.locator("xpath=../../..");
-  // çıktı bloğu "=" işaretinin sağında: en sağdaki 32 sayı
+  // the output block is right of the "=": the rightmost 32 numbers
   const outs = () => root.evaluate((el) => {
     const cells = [...el.querySelectorAll("div")].filter((d) => d.style.position === "absolute" && /^-?\d/.test(d.textContent ?? "") && d.children.length === 0);
     const xs = [...new Set(cells.map((d) => parseFloat(d.style.left)))].sort((a, b) => a - b);
@@ -143,7 +148,7 @@ test("4.4: laboratuvarda x × 10 çıktıyı değiştirmiyor", async ({ page }) 
   expect(await outs()).toBe(before);
 });
 
-// --- 4.9–4.11: attention sayfaları ---
+// --- 4.9–4.11: attention pages ---
 const stat = (root: import("@playwright/test").Locator, label: string) =>
   root.locator(".stat").filter({ hasText: label }).locator(".val");
 
@@ -198,7 +203,7 @@ test("4.10 MQA: yanlış eksen sırası Q head'lerini dönüşümlü bağlıyor"
 
 test("4.11 attention: maske açıkken köşegen üstü 0, maskesizken gelecek sızıyor", async ({ page }) => {
   await page.goto("http://localhost:5173/#/gemma/attention", { waitUntil: "networkidle" });
-  const fig = page.locator(".fig").filter({ hasText: "Senin attention'ından çıkan ağırlıklar" });
+  const fig = page.locator(".fig").filter({ hasText: "Projenin attention'ından çıkan ağırlıklar" });
   await fig.scrollIntoViewIfNeeded();
   await page.waitForTimeout(600);
   expect(Number(await stat(fig, "köşegen üstü en büyük ağırlık").textContent())).toBe(0);
@@ -239,7 +244,7 @@ test("4.3 √d: eski yol adımı etiketli ve bf16 gidiş-dönüşte değişen de
   await expect(fig).toContainText("Eski yol");
   const val = fig.locator(".stat").filter({ hasText: "gidiş-dönüşte değişen değer" }).locator(".val");
   await expect(val).toHaveText(/^%\d/);
-  // float32 satırında fark ~0, bf16 satırı kaydırıcıyla değişiyor
+  // the float32 row differs by ~0, the bf16 row changes with the slider
   await fig.locator("input[type=range]").fill("5");
   await expect(fig.getByText("× 45.25 → bf16")).toBeVisible();
 });
@@ -250,26 +255,26 @@ test("4.3 √d: sayfada artık görsel token'ların ÷√d'si anlatılmıyor, ya
   await expect(body).toContainText("Görsel token'lar: neden çarpılmıyor?");
   await expect(body).toContainText("scale_embeddings=False");
   await expect(body).not.toContainText("neden önce bölüyoruz");
-  // Düzeltmeden sonraki gerçek model ölçümü sayfada yazıyor
+  // the real-model measurement after the fix is on the page
   await expect(body).toContainText("0.195");
   await expect(body).toContainText("%100");
   await expect(body).not.toContainText("Colab'da yeniden koşu bekliyor");
 });
 
-// --- "Bu sayfada": çok geniş ekranda sağda sessiz liste, daha dar ekranda üst çubukta açılır liste ---
+// --- "On this page": a quiet list on the right on very wide screens, a dropdown in the top bar otherwise ---
 test("bu sayfada: 1920'de sağda liste, geniş şekillerle çakışmıyor, tıklayınca bölüme gidiyor ve adres güncelleniyor", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1000 });
   await page.goto("http://localhost:5173/#/gemma/attention", { waitUntil: "networkidle" });
   const toc = page.locator(".pagetoc");
   await expect(toc).toBeVisible();
   const items = toc.locator("a");
-  await expect(items.nth(3)).toBeVisible();                     // başlıklar MDX yüklenince geliyor
-  await expect(page.getByRole("button", { name: /Bu sayfada/ })).toBeHidden();   // liste varken açılır menü yok
+  await expect(items.nth(3)).toBeVisible();                     // headings arrive once the MDX has loaded
+  await expect(page.getByRole("button", { name: /Bu sayfada/ })).toBeHidden();   // no dropdown while the list is shown
   const name = (await items.nth(2).textContent())!;
   await items.nth(2).click();
   await expect(toc.locator("a[aria-current='location']")).toHaveText(name, { timeout: 5000 });
   expect(page.url()).toMatch(/#\/gemma\/attention#[a-z0-9-]+$/);
-  // Liste, ortalanan geniş şekillerin (.wide, .scrolly) sağ kenarının dışında
+  // the list sits outside the right edge of the centered wide figures (.wide, .scrolly)
   const [left, widest] = await page.evaluate(() => [
     document.querySelector(".pagetoc")!.getBoundingClientRect().left,
     Math.max(...[...document.querySelectorAll("article.prose .wide, article.prose .scrolly")].map((e) => e.getBoundingClientRect().right)),
@@ -288,8 +293,8 @@ test("bu sayfada: 1440'ta liste yok, üst çubukta şu anki bölüm ve açılır
   await expect(pop.locator("a").nth(3)).toBeVisible();
   const name = (await pop.locator("a").nth(2).textContent())!;
   await pop.locator("a").nth(2).click();
-  await expect(pop).toBeHidden();                               // seçince kapanıyor
-  await expect(page.locator(".topbar .where .cur")).toContainText(name, { timeout: 5000 });   // üst çubuk o bölümü gösteriyor
+  await expect(pop).toBeHidden();                               // closes on selection
+  await expect(page.locator(".topbar .where .cur")).toContainText(name, { timeout: 5000 });   // the top bar shows that section
   await btn.click();
   await expect(pop).toBeVisible();
   await page.keyboard.press("Escape");
@@ -311,7 +316,7 @@ test("bu sayfada: derin link bölüme kaydırıyor, tek bölümlü sayfada liste
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("http://localhost:5173/#/gemma/attention#maske-kim-kimi-gorebilir", { waitUntil: "networkidle" });
   const h = page.getByRole("heading", { name: "Maske: kim kimi görebilir?" });
-  await expect.poll(async () => (await h.boundingBox())?.y ?? 9999, { timeout: 8000 }).toBeLessThan(200);   // üst çubuğun hemen altında, örtülmüyor
+  await expect.poll(async () => (await h.boundingBox())?.y ?? 9999, { timeout: 8000 }).toBeLessThan(200);   // right below the top bar, not covered
   expect((await h.boundingBox())!.y).toBeGreaterThan(52);
   await page.setViewportSize({ width: 1920, height: 1000 });
   await page.goto("http://localhost:5173/#/", { waitUntil: "networkidle" });

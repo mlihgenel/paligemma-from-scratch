@@ -1,4 +1,4 @@
-// Bölüm 2.2: ön işleme, Conv2d yama gezgini, flatten/transpose 3D, konum embedding'i, karıştırma deneyi
+// Chapter 2.2: preprocessing, the Conv2d patch explorer, flatten/transpose in 3D, the position embedding, the shuffle experiment
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import * as d3 from "d3";
@@ -8,15 +8,17 @@ import { Heatmap, LineChart, useWidth } from "../../components/charts";
 import { Stage3D, Cubes, Cube, Tag, View } from "../../interact/three";
 import { Loading, S, Stat } from "../../components/ui";
 import { useStore } from "../../store";
+import { useT } from "../../i18n";
 
 const BASE = import.meta.env.BASE_URL + "data/";
 const P = 14, N = 16;
 
-/* ---------------- ön işleme scrolly ---------------- */
+/* ---------------- preprocessing scrolly ---------------- */
 export function PreprocFigure({ step }: { step: number }) {
+  const tr = useT();
   const { data, error } = useData<any>("pipeline");
   const { imageIdx } = useStore();
-  if (!data) return <Loading what="görüntü" error={error} />;
+  if (!data) return <Loading what={tr("image", "görüntü")} error={error} />;
   const im = data.images[imageIdx];
   const hist = step <= 1 ? im.hist_u8 : step === 2 ? im.hist_rescaled : im.hist_normalized;
   const [lo, hi] = step <= 1 ? [0, 255] : step === 2 ? [0, 1] : [-1, 1];
@@ -34,11 +36,11 @@ export function PreprocFigure({ step }: { step: number }) {
           <ChannelStack px={im.pixel_values} />
         )}
         <div style={{ flex: 1, minWidth: 240 }}>
-          <div style={{ fontSize: 13, marginBottom: 4 }}><b>Piksel histogramı</b> <span className="muted">· aralık [{lo}, {hi}]</span></div>
-          <LineChart height={190} xLabel="değer" yDomain={undefined} fmtX={(v) => (Math.abs(v) < 2 ? v.toFixed(1) : v.toFixed(0))}
+          <div style={{ fontSize: 13, marginBottom: 4 }}><b>{tr("Pixel histogram", "Piksel histogramı")}</b> <span className="muted">· {tr("range", "aralık")} [{lo}, {hi}]</span></div>
+          <LineChart height={190} xLabel={tr("value", "değer")} yDomain={undefined} fmtX={(v) => (Math.abs(v) < 2 ? v.toFixed(1) : v.toFixed(0))}
             series={ch.map(([n, c], k) => ({ name: n, color: c, values: hist[k], x: xs }))} />
           <div className="small" style={{ marginTop: 6 }}>
-            şekil <S s={step === 4 ? "3, 224, 224" : step === 0 ? `${im.orig_size[1]}, ${im.orig_size[0]}, 3` : "224, 224, 3"} ax={step === 4 ? "C,," : ",,C"} />
+            {tr("shape", "şekil")} <S s={step === 4 ? "3, 224, 224" : step === 0 ? `${im.orig_size[1]}, ${im.orig_size[0]}, 3` : "224, 224, 3"} ax={step === 4 ? "C,," : ",,C"} />
             {" "}<span className="muted mono">{step <= 1 ? "uint8" : "float32"}</span>
           </div>
         </div>
@@ -101,11 +103,12 @@ function drawFilter(cv: HTMLCanvasElement | null, f: Arr, i: number) {
 }
 
 export function PatchExplorer() {
+  const tr = useT();
   const pipe = useData<any>("pipeline"), sl = useData<any>("pg_slices");
   const { imageIdx } = useStore();
   const [pr, setPr] = useState<[number, number]>([7, 7]);
   const [fi, setFi] = useState(0);
-  const [hf, setHf] = useState<number | null>(null);   // üstüne gelinen filtre: sadece önizleme halkası
+  const [hf, setHf] = useState<number | null>(null);   // the hovered filter: only a preview ring
   const zoom = useRef<HTMLCanvasElement>(null);
   const fz = useRef<HTMLCanvasElement>(null);
   const gal = useRef<(HTMLCanvasElement | null)[]>([]);
@@ -132,14 +135,14 @@ export function PatchExplorer() {
     e.preventDefault();
     setFi((f) => Math.min(63, Math.max(0, f + d)));
   };
-  if (!px || !F || !fmap) return <Loading what="pikseller ve filtreler" error={pipe.error ?? sl.error} />;
+  if (!px || !F || !fmap) return <Loading what={tr("pixels and filters", "pikseller ve filtreler")} error={pipe.error ?? sl.error} />;
   const im = pipe.data.images[imageIdx];
   const v = fmap[pr[0] * N + pr[1]];
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 300px) minmax(220px, 1fr) minmax(220px, 300px)", gap: 28, alignItems: "start" }}>
         <div>
-          <div className="small" style={{ marginBottom: 6 }}><b>Görüntü</b> <span className="muted">· bir yamanın üstüne gel</span></div>
+          <div className="small" style={{ marginBottom: 6 }}><b>{tr("Image", "Görüntü")}</b> <span className="muted">· {tr("hover a patch", "bir yamanın üstüne gel")}</span></div>
           <div style={{ position: "relative", width: "100%", aspectRatio: "1", backgroundImage: `url(${BASE}img_${im.name}_224.png)`, backgroundSize: "cover", borderRadius: 3, cursor: "crosshair", overflow: "hidden" }}
             onPointerMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPr([Math.min(N - 1, Math.floor(((e.clientY - r.top) / r.height) * N)), Math.min(N - 1, Math.floor(((e.clientX - r.left) / r.width) * N))]); }}>
             <div style={{ position: "absolute", inset: 0, backgroundImage: "linear-gradient(to right, rgba(255,255,255,.35) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,.35) 1px, transparent 1px)", backgroundSize: `${100 / N}% ${100 / N}%` }} />
@@ -148,7 +151,7 @@ export function PatchExplorer() {
           <div className="small muted" style={{ marginTop: 4 }}>yama ({pr[0]}, {pr[1]}) → token {pr[0] * N + pr[1]}</div>
         </div>
         <div>
-          <div className="small" style={{ marginBottom: 6 }}><b>Bir yama × bir filtre = bir sayı</b></div>
+          <div className="small" style={{ marginBottom: 6 }}><b>{tr("One patch × one filter = one number", "Bir yama × bir filtre = bir sayı")}</b></div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <div><canvas ref={zoom} style={{ width: 112, height: 112, imageRendering: "pixelated", borderRadius: 3, display: "block" }} /><div className="small muted">14 × 14 × 3 piksel</div></div>
             <span style={{ fontSize: 22, color: "var(--fg-faint)" }}>·</span>
@@ -156,10 +159,10 @@ export function PatchExplorer() {
             <span style={{ fontSize: 22, color: "var(--fg-faint)" }}>=</span>
             <div style={{ fontFamily: "var(--display)", fontSize: 30, fontWeight: 650, color: "var(--accent)", fontVariantNumeric: "tabular-nums" }}>{v.toFixed(2)}</div>
           </div>
-          <p className="small muted" style={{ margin: "10px 0 0" }}>588 piksel × 588 ağırlık, toplam (+ bias). Gerçek modelde 1152 filtre var: her yama 1152 sayıya, yani bir token'a dönüşüyor.</p>
+          <p className="small muted" style={{ margin: "10px 0 0" }}>{tr("588 pixels × 588 weights, summed (+ bias). The real model has 1152 filters: each patch becomes 1152 numbers, i.e. one token.", "588 piksel × 588 ağırlık, toplam (+ bias). Gerçek modelde 1152 filtre var: her yama 1152 sayıya, yani bir token'a dönüşüyor.")}</p>
           <div className="small" style={{ margin: "12px 0 6px", display: "flex", justifyContent: "space-between", gap: 8 }}>
-            <span><b>Galeriden bir filtreye tıkla</b></span>
-            <span className="muted mono">{hf !== null && hf !== fi ? `#${sl.data.patch_filters_idx[hf]} · tıkla` : `seçili #${sl.data.patch_filters_idx[fi]}`}</span>
+            <span><b>{tr("Click a filter in the gallery", "Galeriden bir filtreye tıkla")}</b></span>
+            <span className="muted mono">{hf !== null && hf !== fi ? tr(`#${sl.data.patch_filters_idx[hf]} · click`, `#${sl.data.patch_filters_idx[hf]} · tıkla`) : tr(`selected #${sl.data.patch_filters_idx[fi]}`, `seçili #${sl.data.patch_filters_idx[fi]}`)}</span>
           </div>
           <div role="listbox" aria-label="filtre galerisi" tabIndex={0} onKeyDown={onGalKey} onPointerLeave={() => setHf(null)}
             style={{ display: "grid", gridTemplateColumns: "repeat(16, 1fr)", gap: 3, outline: "none" }}>
@@ -170,13 +173,13 @@ export function PatchExplorer() {
                   transform: i === hf && i !== fi ? "scale(1.12)" : "none", opacity: i === fi || i === hf ? 1 : 0.82 }} />
             ))}
           </div>
-          <div className="small muted" style={{ marginTop: 6 }}>gerçek PaliGemma filtreleri (en büyük normlu 64'ü), RGB'ye ölçeklenmiş · ok tuşlarıyla da gezebilirsin</div>
+          <div className="small muted" style={{ marginTop: 6 }}>{tr("real PaliGemma filters (the 64 with the largest norm), scaled to RGB · arrow keys work too", "gerçek PaliGemma filtreleri (en büyük normlu 64'ü), RGB'ye ölçeklenmiş · ok tuşlarıyla da gezebilirsin")}</div>
         </div>
         <div>
-          <div className="small" style={{ marginBottom: 6 }}><b>Bu filtrenin bütün yamalardaki cevabı</b> <span className="muted">· [16, 16]</span></div>
+          <div className="small" style={{ marginBottom: 6 }}><b>{tr("This filter's response on every patch", "Bu filtrenin bütün yamalardaki cevabı")}</b> <span className="muted">· [16, 16]</span></div>
           <Heatmap values={fmap} rows={N} cols={N} diverging height={260} highlight={{ r: pr[0], c: pr[1] }} legend
             onCell={(r, c) => setPr([r, c])} cellLabel={(r, c, val) => `yama (${r}, ${c}) · ${val.toFixed(2)}`} />
-          <div className="small muted">Conv2d çıktısının tek bir kanalı: <span className="mono">patch_embeds[0, {sl.data.patch_filters_idx[fi]}]</span></div>
+          <div className="small muted">{tr("A single channel of the Conv2d output", "Conv2d çıktısının tek bir kanalı")}: <span className="mono">patch_embeds[0, {sl.data.patch_filters_idx[fi]}]</span></div>
         </div>
       </div>
     </div>
@@ -186,6 +189,7 @@ export function PatchExplorer() {
 /* ---------------- flatten + transpose (3D) ---------------- */
 const C3 = 4, H3 = 3, W3 = 3;
 export function FlattenScene({ step }: { step: number }) {
+  const tr = useT();
   const cols = ["#2a78d6", "#eb6834", "#1baf7a", "#6250d6"];
   const g = 0.46;
   const items: Cube[] = [];
@@ -195,21 +199,22 @@ export function FlattenScene({ step }: { step: number }) {
     if (step === 0) pos = [(x - 1) * g, (1 - y) * g, (c - 1.5) * g * 1.6];
     else if (step === 1) pos = [(p - 4) * g, (1.5 - c) * g, 0];
     else pos = [(c - 1.5) * g, (4 - p) * g, 0];
-    items.push({ id: `${c}${p}`, pos, color: cols[c], tip: () => <>kanal c={c}, yama p={p} (y={y}, x={x})<div className="muted">{step === 0 ? "[C, H, W]" : step === 1 ? `[C, H·W] → satır ${c}, sütun ${p}` : `[H·W, C] → satır ${p} (token ${p}), sütun ${c}`}</div></> });
+    items.push({ id: `${c}${p}`, pos, color: cols[c], tip: () => <>{tr("channel", "kanal")} c={c}, {tr("patch", "yama")} p={p} (y={y}, x={x})<div className="muted">{step === 0 ? "[C, H, W]" : step === 1 ? tr(`[C, H·W] → row ${c}, column ${p}`, `[C, H·W] → satır ${c}, sütun ${p}`) : tr(`[H·W, C] → row ${p} (token ${p}), column ${c}`, `[H·W, C] → satır ${p} (token ${p}), sütun ${c}`)}</div></> });
   }
   const views: View[] = [{ pos: [3.2, 2.4, 4.6], target: [0, 0, 0] }, { pos: [0.4, 0.6, 6.2], target: [0, 0, 0] }, { pos: [0.6, 0.4, 6.8], target: [0, 0, 0] }];
   return (
     <Stage3D view={views[Math.min(step, 2)]} height={420}>
       <Cubes items={items} cell={0.4} />
-      {step === 0 && <><Tag position={[0, 1.0, -1.6]} color="var(--fg-muted)">C = 4 kanal (gerçekte 1152) ↗</Tag><Tag position={[0, -1.0, 1.6]} color="var(--fg-muted)">H × W = 3 × 3 (gerçekte 16 × 16)</Tag></>}
-      {step === 1 && <Tag position={[0, 1.3, 0]} color="var(--fg-muted)">[C, H·W] = [4, 9] · satır = kanal</Tag>}
-      {step === 2 && <Tag position={[0, 2.4, 0]} color="var(--accent)">[H·W, C] = [9, 4] · satır = token</Tag>}
+      {step === 0 && <><Tag position={[0, 1.0, -1.6]} color="var(--fg-muted)">{tr("C = 4 channels (1152 in reality) ↗", "C = 4 kanal (gerçekte 1152) ↗")}</Tag><Tag position={[0, -1.0, 1.6]} color="var(--fg-muted)">{tr("H × W = 3 × 3 (16 × 16 in reality)", "H × W = 3 × 3 (gerçekte 16 × 16)")}</Tag></>}
+      {step === 1 && <Tag position={[0, 1.3, 0]} color="var(--fg-muted)">[C, H·W] = [4, 9] · {tr("row = channel", "satır = kanal")}</Tag>}
+      {step === 2 && <Tag position={[0, 2.4, 0]} color="var(--accent)">[H·W, C] = [9, 4] · {tr("row = token", "satır = token")}</Tag>}
     </Stage3D>
   );
 }
 
 /* ---------------- konum embedding'i ---------------- */
 export function PosEmbedExplorer() {
+  const tr = useT();
   const { data, error } = useData<any>("pg_slices");
   const [p, setP] = useState(N * 8 + 8);
   const over = useRef<HTMLCanvasElement>(null);
@@ -230,12 +235,12 @@ export function PosEmbedExplorer() {
       }
     }
   }, [cos]);
-  if (!cos) return <Loading what="konum embedding'leri" error={error} />;
+  if (!cos) return <Loading what={tr("position embeddings", "konum embedding'leri")} error={error} />;
   const row = cos.data.subarray(p * N * N, (p + 1) * N * N) as Float32Array;
   return (
     <div className="grid2" style={{ alignItems: "start" }}>
       <div>
-        <div className="small" style={{ marginBottom: 6 }}><b>256 konumun hepsi</b> <span className="muted">· her küçük kare bir konumun ötekilerle benzerliği, üstüne gel</span></div>
+        <div className="small" style={{ marginBottom: 6 }}><b>{tr("All 256 positions", "256 konumun hepsi")}</b> <span className="muted">· {tr("each small square is one position's similarity to the others, hover", "her küçük kare bir konumun ötekilerle benzerliği, üstüne gel")}</span></div>
         <div style={{ position: "relative", maxWidth: 420 }}>
         <canvas ref={over} style={{ width: "100%", imageRendering: "pixelated", cursor: "crosshair", display: "block" }}
           onPointerMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); const qc = Math.floor(((e.clientX - r.left) / r.width) * N), qr = Math.floor(((e.clientY - r.top) / r.height) * N); setP(Math.max(0, Math.min(N * N - 1, qr * N + qc))); }} />
@@ -243,16 +248,17 @@ export function PosEmbedExplorer() {
         </div>
       </div>
       <div>
-        <div className="small" style={{ marginBottom: 6 }}><b>Konum ({Math.floor(p / N)}, {p % N})</b> <span className="muted">· öteki 255 konumla kosinüs benzerliği</span></div>
+        <div className="small" style={{ marginBottom: 6 }}><b>{tr("Position", "Konum")} ({Math.floor(p / N)}, {p % N})</b> <span className="muted">· {tr("cosine similarity with the other 255 positions", "öteki 255 konumla kosinüs benzerliği")}</span></div>
         <Heatmap values={row} rows={N} cols={N} height={300} domain={[-0.2, 1]} highlight={{ r: Math.floor(p / N), c: p % N }} onCell={(r, c) => setP(r * N + c)} cellLabel={(r, c, v) => `(${r}, ${c}) · cos = ${v.toFixed(3)}`} />
-        <p className="small muted" style={{ marginTop: 6 }}>Kimse modele "bu yama sol üstte" demedi. Gerçek PaliGemma'nın öğrendiği vektörler kendiliğinden 2D bir ızgara düzeni taşıyor: komşu konumlar birbirine benziyor, aynı satır ve sütun da öyle.</p>
+        <p className="small muted" style={{ marginTop: 6 }}>{tr("Nobody told the model \"this patch is top left\". The vectors the real PaliGemma learned carry a 2D grid layout on their own: neighboring positions are similar, and so are positions in the same row and column.", "Kimse modele \"bu yama sol üstte\" demedi. Gerçek PaliGemma'nın öğrendiği vektörler kendiliğinden 2D bir ızgara düzeni taşıyor: komşu konumlar birbirine benziyor, aynı satır ve sütun da öyle.")}</p>
       </div>
     </div>
   );
 }
 
-/* ---------------- karıştırma deneyi ---------------- */
+/* ---------------- shuffle experiment ---------------- */
 export function ShuffleDemo() {
+  const tr = useT();
   const { data } = useData<any>("pipeline");
   const { imageIdx } = useStore();
   const [order, setOrder] = useState<number[]>(() => Array.from({ length: 64 }, (_, i) => i));
@@ -271,11 +277,11 @@ export function ShuffleDemo() {
       </div>
       <div>
         <div className="row" style={{ gap: 8 }}>
-          <button className="btn primary" onClick={shuffle}>Yamaları karıştır</button>
-          <button className="btn" disabled={sorted} onClick={() => setOrder(order.slice().sort((a, b) => a - b))}>Sırala</button>
+          <button className="btn primary" onClick={shuffle}>{tr("Shuffle the patches", "Yamaları karıştır")}</button>
+          <button className="btn" disabled={sorted} onClick={() => setOrder(order.slice().sort((a, b) => a - b))}>{tr("Sort", "Sırala")}</button>
         </div>
         <p style={{ fontSize: 15, marginTop: 12 }}>
-          Konum embedding'i olmasa encoder bu iki görüntüyü <b>aynı</b> görürdü: attention ve MLP token sırasına duyarsız (permütasyona eşdeğer). Karıştırılmış dizinin çıktısı, orijinal çıktının aynı şekilde karıştırılmış hali olurdu. "Tabela"yı "tabela" yapan şey yamaların <i>nerede</i> olduğu, ve bu bilgi sadece konum embedding'iyle geliyor.
+          {tr(<>Without the position embedding the encoder would see these two images as the <b>same</b>: attention and the MLP ignore token order (they are permutation-equivariant). The output of the shuffled sequence would just be the original output shuffled the same way. What makes a sign a sign is <i>where</i> the patches are, and that information only comes from the position embedding.</>, <>Konum embedding'i olmasa encoder bu iki görüntüyü <b>aynı</b> görürdü: attention ve MLP token sırasına duyarsız (permütasyona eşdeğer). Karıştırılmış dizinin çıktısı, orijinal çıktının aynı şekilde karıştırılmış hali olurdu. "Tabela"yı "tabela" yapan şey yamaların <i>nerede</i> olduğu, ve bu bilgi sadece konum embedding'iyle geliyor.</>)}
         </p>
       </div>
     </div>

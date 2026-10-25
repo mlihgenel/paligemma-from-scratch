@@ -1,5 +1,5 @@
-// Hücre tuvali: her hücre kimliğini (id) koruyan, yaylı (spring) animasyonla yer değiştiren bir div.
-// Aynı id'li hücre bir durumdan ötekine fiziksel olarak kayar: "hangi sayı nereye gitti" izlenebilir.
+// Cell canvas: each cell is a div that keeps its id and moves with a spring animation.
+// A cell with the same id physically slides from one state to the next, so "which number went where" can be followed.
 import { ReactNode, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import * as d3 from "d3";
@@ -8,16 +8,16 @@ import { Inspect } from "./Inspect";
 export interface Cell {
   id: string;
   x: number; y: number; w: number; h: number;
-  v?: number;                 // renk için değer
-  fill?: string;              // doğrudan renk (v yerine)
-  text?: string;              // hücre içi yazı
+  v?: number;                 // value for the color
+  fill?: string;              // a direct color (instead of v)
+  text?: string;              // text inside the cell
   opacity?: number;
-  ring?: boolean;             // vurgu halkası
+  ring?: boolean;             // highlight ring
   editable?: boolean;
-  tip?: () => ReactNode;      // hover içeriği
-  group?: string;             // hover'da aynı gruptaki hücreler de vurgulanır
+  tip?: () => ReactNode;      // hover content
+  group?: string;             // on hover, cells in the same group are highlighted too
   z?: number;
-  delay?: number;             // saniye: sıralı akış için
+  delay?: number;             // seconds: for a staggered flow
 }
 
 const NEG = "#5b67d6", MID = "#f1efe9", POS = "#cf5a35";

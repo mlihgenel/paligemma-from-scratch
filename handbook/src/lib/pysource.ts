@@ -1,8 +1,8 @@
-// ../src/*.py dosyalarını derleme anında ham metin olarak okur ve sembol (sınıf/metot) aralığını bulur.
-// Satır numarası sabit yazılmadığı için src/ değiştikçe kitap kendiliğinden güncel kalır.
+// Reads ../src/*.py as raw text at build time and finds a symbol's (class/method) line range.
+// Line numbers are not hard-coded, so the book stays up to date as src/ changes.
 const files = import.meta.glob(["../../../src/*.py", "../../../checks/*.py"], { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 
-// Anahtar dosya adı ("gemma.py", "check_gemma.py"); klasörü DIRS'te
+// Keyed by file name ("gemma.py", "check_gemma.py"); the folder is in DIRS
 export const SOURCES: Record<string, string> = Object.fromEntries(
   Object.entries(files).map(([p, s]) => [p.split("/").pop()!, s]),
 );
@@ -20,7 +20,7 @@ const indentOf = (l: string) => l.length - l.trimStart().length;
  */
 export function findSymbol(file: string, symbol: string, withComments = true): Snippet {
   const src = SOURCES[file];
-  if (!src) return { file, start: 0, end: 0, lines: [`# ${file} bulunamadı`], found: false };
+  if (!src) return { file, start: 0, end: 0, lines: [`# ${file} not found`], found: false };
   const lines = src.split("\n");
   const parts = symbol.split(".");
   let lo = 0, hi = lines.length, baseIndent = -1, start = -1;
@@ -28,9 +28,9 @@ export function findSymbol(file: string, symbol: string, withComments = true): S
     const re = new RegExp(`^\\s*(class|def)\\s+${part}\\b`);
     start = -1;
     for (let i = lo; i < hi; i++) if (re.test(lines[i]) && (baseIndent < 0 || indentOf(lines[i]) > baseIndent)) { start = i; break; }
-    if (start < 0) return { file, start: 0, end: 0, lines: [`# ${symbol} ${file} içinde bulunamadı`], found: false };
+    if (start < 0) return { file, start: 0, end: 0, lines: [`# ${symbol} not found in ${file}`], found: false };
     baseIndent = indentOf(lines[start]);
-    // Gövde: girintisi tanımdan büyük ya da boş olan satırlar. Çok satırlı imzalar için ")" ile biten satıra kadar devam
+    // Body: lines indented more than the definition, or empty. Multi-line signatures continue up to the line ending with ")"
     let end = start + 1;
     let inSig = !/:\s*(#.*)?$/.test(lines[start]);
     while (end < hi) {
@@ -47,7 +47,7 @@ export function findSymbol(file: string, symbol: string, withComments = true): S
   return { file, start: s + 1, end: hi, lines: lines.slice(s, hi).map((l) => l.replace(/\s+$/, "")), found: true };
 }
 
-/** Bir dosyada bir metnin geçtiği satır numarası (1 tabanlı), yoksa -1 */
+/** Line number (1-based) where a text occurs in a file, or -1 */
 export function lineOf(file: string, needle: string): number {
   const i = (SOURCES[file] ?? "").split("\n").findIndex((l) => l.includes(needle));
   return i < 0 ? -1 : i + 1;

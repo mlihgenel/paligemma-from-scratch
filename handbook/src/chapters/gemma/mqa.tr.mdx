@@ -68,7 +68,7 @@ x.reshape(B, n_rep * n_kv, T, hd)             # Q0 → KV0, Q1 → KV1, Q2 → K
 
 ## expand ne zaman kopyalıyor?
 
-`expand` veriyi kopyalamıyor, `reshape` ise birleştirilen eksenlere bağlı olarak bir görünüm ya da kopya üretiyor. Ölçüm, senin `repeat_kv`'nle:
+`expand` veriyi kopyalamıyor, `reshape` ise birleştirilen eksenlere bağlı olarak bir görünüm ya da kopya üretiyor. Ölçüm, projedeki `repeat_kv` ile:
 
 <Fig caption={<><b>MQA'da hiçbir şey kopyalanmıyor, GQA'da kopyalanıyor.</b> n_kv = 1 iken birleştirilen iki eksenden biri zaten 1 uzunlukta olduğu için <code>reshape</code> yeni bir bellek açmadan görünüm döndürebiliyor. n_kv = 2 iken (n_kv, n_rep) eksenleri, bellek düzeni sürekli olmadığı için kopyalanarak birleşiyor. Her iki durumda <b>saklanan</b> K/V küçük, çünkü tekrar yalnızca hesap anında.</>}>
 <ExpandMemory />
@@ -83,5 +83,5 @@ Gemma 2B'de <code>8 × 256 = 2048 = hidden_size</code>, yani <code>head_dim</cod
 </Callout>
 
 <Impact from="gemma.py: repeat_kv(k, n_rep)" to="KV cache: saklanan tensör">
-KV cache eklendiğinde <b>repeat_kv'den önceki</b> K ve V (1 head) saklanacak. Genişletilmiş hali saklanırsa 8 kat bellek harcanır ve MQA'nın bütün kazancı kaybolur.
+KV cache <b>repeat_kv'den önceki</b> K ve V'yi (1 head) saklıyor. Genişletilmiş hali saklansaydı 8 kat bellek harcanır ve MQA'nın bütün kazancı kaybolurdu (<Link to="/gemma/kv-cache">4.12</Link>).
 </Impact>

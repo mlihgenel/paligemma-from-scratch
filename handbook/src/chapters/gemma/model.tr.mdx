@@ -24,7 +24,7 @@ import { Link } from "react-router-dom";
 
 ## ModuleList, liste, Sequential
 
-<Fig wide caption={<><b>Üç konteyner, iki Linear katman.</b> Senin modülünle aynı deney: düz Python listesi parametreleri <b>kaydetmiyor</b>. <code>model.parameters()</code> onları görmüyor, optimizer güncellemiyor, <code>load_state_dict</code> yüklemiyor, <code>.to(device)</code> taşımıyor. Hata vermeden.</>}>
+<Fig wide caption={<><b>Üç konteyner, iki Linear katman.</b> Projedeki modülle aynı deney: düz Python listesi parametreleri <b>kaydetmiyor</b>. <code>model.parameters()</code> onları görmüyor, optimizer güncellemiyor, <code>load_state_dict</code> yüklemiyor, <code>.to(device)</code> taşımıyor. Hata vermeden.</>}>
 <Containers />
 </Fig>
 
@@ -36,16 +36,16 @@ Düz listeyle yazılmış bir model çalışır ve doğru şekiller üretir. Ama
 
 ## Neden son bir norm?
 
-Akış katmanlar boyunca büyüyor. Bunu gerçek bir modelde, senin SigLIP encoder'ında, siglip-base ağırlıklarıyla ölçtük:
+Akış katmanlar boyunca büyüyor. Bunu gerçek bir modelde, projenin SigLIP encoder'ında, siglip-base ağırlıklarıyla ölçtük:
 
-<Fig caption={<><b>Senin SigLIP'inden geçen bir tabela fotoğrafı (c02).</b> Token başına ortalama norm katmanlarda 5'ten 48'e çıkıyor. Tek bir eleman 213'e ulaşıyor (<code>check_encoder.py</code>'deki "değerler ~200'e kadar büyür" yorumu buradan). <code>post_layernorm</code> hepsini tekrar ≈ √768 · |γ| ölçeğine getiriyor.</>}>
+<Fig caption={<><b>Projenin SigLIP'inden geçen bir tabela fotoğrafı (c02).</b> Token başına ortalama norm katmanlarda 5'ten 48'e çıkıyor. Tek bir eleman 213'e ulaşıyor (<code>check_encoder.py</code>'deki "değerler ~200'e kadar büyür" yorumu buradan). <code>post_layernorm</code> hepsini tekrar ≈ √768 · |γ| ölçeğine getiriyor.</>}>
 <SiglipGrowth />
 </Fig>
 
-Gemma'da da aynı yapı: oyuncak modelde akışın normu 48'den 57'ye çıkıyor (<Link to="/gemma/akis">4.2</Link>). lm_head bu akışı embedding tablosuyla nokta çarpımına sokacak. Normalize edilmezse logit'lerin ölçeği girdiye ve katman sayısına bağlı olurdu.
+Gemma'da da aynı yapı: oyuncak modelde akışın normu 48'den 57'ye çıkıyor (<Link to="/gemma/residual">4.2</Link>). lm_head bu akışı embedding tablosuyla nokta çarpımına sokacak. Normalize edilmezse logit'lerin ölçeği girdiye ve katman sayısına bağlı olurdu.
 
 <ShapeTrace start={{ shape: "1, 260, 2048", ax: "B,T,D", label: "inputs_embeds (PaliGemma'dan)" }} steps={[
-  { op: "× normalizer", shape: "1, 260, 2048", ax: "B,T,D" },
+  { op: "× normalizer (scale_embeddings=False: PaliGemma'da atlanıyor)", shape: "1, 260, 2048", ax: "B,T,D" },
   { op: "layers[0]", shape: "1, 260, 2048", ax: "B,T,D" },
   { op: "…", shape: "1, 260, 2048", ax: "B,T,D" },
   { op: "layers[17]", shape: "1, 260, 2048", ax: "B,T,D" },

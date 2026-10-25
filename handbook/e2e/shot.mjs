@@ -1,4 +1,4 @@
-// Ekran görüntüsü + konsol hataları: node e2e/shot.mjs <çıktı klasörü> <yol> [yol...] [--dark] [--mobile] [--full]
+// Screenshot + console errors: node e2e/shot.mjs <out dir> <path> [path...] [--dark] [--mobile] [--full]
 import { chromium } from "@playwright/test";
 const args = process.argv.slice(2);
 const out = args[0];
@@ -18,7 +18,7 @@ for (const p of paths) {
   await page.waitForTimeout(2500);
   const name = (p.replace(/\//g, "_") || "_home") + (flags.has("--dark") ? "-dark" : "") + (flags.has("--mobile") ? "-m" : "");
   await page.screenshot({ path: `${out}/${name}.png`, fullPage: flags.has("--full") });
-  console.log(p, "->", `${out}/${name}.png`, errs.length ? "\n  " + errs.slice(0, 8).join("\n  ") : "(hata yok)");
+  console.log(p, "->", `${out}/${name}.png`, errs.length ? "\n  " + errs.slice(0, 8).join("\n  ") : "(no errors)");
   await page.close();
 }
 await browser.close();

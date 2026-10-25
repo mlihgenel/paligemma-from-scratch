@@ -1,4 +1,4 @@
-// Bir sayfadaki n. scrolly'nin her adımında figürün görüntüsü: node e2e/steps.mjs <klasör> <yol> [scrollyIdx=0] [--dark]
+// Figure screenshot at every step of the n-th scrolly on a page: node e2e/steps.mjs <dir> <path> [scrollyIdx=0] [--dark]
 import { chromium } from "@playwright/test";
 const [out, path, idx = "0", ...rest] = process.argv.slice(2);
 const browser = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });

@@ -130,7 +130,7 @@ Bu yüzden `check_gemma.py` karşılaştırmadan önce `hf.weight.normal_()` ile
 
 İki kod da aynı formülü hesaplıyor, tek fark bf16'ya ne zaman dönüldüğü:
 
-| | Gemma (senin kodun) | Llama |
+| | Gemma (bu proje) | Llama |
 |---|---|---|
 | 1 | `x.float()` → normalize | `x.float()` → normalize |
 | 2 | `× (1 + w)` **float32'de** | **bf16'ya dön** |

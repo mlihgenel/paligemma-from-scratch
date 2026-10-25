@@ -1,5 +1,5 @@
-// bfloat16 öykünmesi. bf16 = float32'nin üst 16 biti: 1 işaret, 8 üs, 7 mantis biti.
-// float32 -> bf16 dönüşümü PyTorch gibi "round to nearest, ties to even".
+// bfloat16 emulation. bf16 = the top 16 bits of float32: 1 sign, 8 exponent, 7 mantissa bits.
+// float32 -> bf16 conversion uses "round to nearest, ties to even", like PyTorch.
 const f32 = new Float32Array(1);
 const u32 = new Uint32Array(f32.buffer);
 
@@ -15,7 +15,7 @@ export function toBf16(x: number): number {
   return f32[0];
 }
 
-/** Bir sayının bitleri: float32 (32) ya da bf16 (16) */
+/** The bits of a number: float32 (32) or bf16 (16) */
 export function bits(x: number, kind: "f32" | "bf16"): { sign: string; exp: string; mant: string } {
   f32[0] = kind === "bf16" ? toBf16(x) : x;
   const s = u32[0].toString(2).padStart(32, "0");
@@ -24,7 +24,7 @@ export function bits(x: number, kind: "f32" | "bf16"): { sign: string; exp: stri
     : { sign: s[0], exp: s.slice(1, 9), mant: s.slice(9) };
 }
 
-/** x'in bf16'daki komşu değerleri arasındaki aralık (1 ulp) */
+/** The gap between x's neighboring bf16 values (1 ulp) */
 export function bf16Ulp(x: number): number {
   const b = toBf16(Math.abs(x));
   if (b === 0) return 0;

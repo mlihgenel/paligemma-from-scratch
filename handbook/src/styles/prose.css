@@ -25,10 +25,12 @@
 .fig > .fig-body { font-family: var(--sans); font-size: 14.5px; line-height: 1.55; }
 .fig figcaption { font-family: var(--sans); font-size: 13.5px; color: var(--fg-muted); margin-top: 14px; line-height: 1.55; max-width: var(--measure); }
 .fig.wide figcaption { margin-left: auto; margin-right: auto; }
-.fig figcaption::before { content: "Şekil " var(--chap, "") counter(fig) "  "; font-weight: 600; color: var(--fg); letter-spacing: 0.01em; }
+.fig figcaption::before { content: "Figure " var(--chap, "") counter(fig) "  "; font-weight: 600; color: var(--fg); letter-spacing: 0.01em; }
 .fig figcaption b { color: var(--fg); font-weight: 600; }
 .fig.codewalk { counter-increment: none; }
-.fig.codewalk figcaption::before { content: "Kod  "; }
+.fig.codewalk figcaption::before { content: "Code  "; }
+html[lang="tr"] .fig figcaption::before { content: "Şekil " var(--chap, "") counter(fig) "  "; }
+html[lang="tr"] .fig.codewalk figcaption::before { content: "Kod  "; }
 
 /* ---- Kenar notu ve sade aside ---- */
 .sidenote { display: block; font-family: var(--sans); font-size: 13.5px; line-height: 1.55; color: var(--fg-muted); margin: 0 0 18px; padding-left: 12px; border-left: 2px solid var(--border-strong); }

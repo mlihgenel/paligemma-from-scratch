@@ -5,7 +5,7 @@ describe("slug", () => {
   it("Türkçe harfleri sadeleştirir", () => {
     expect(slug("Adım adım, gerçek boyutlarla")).toBe("adim-adim-gercek-boyutlarla");
     expect(slug("İçindekiler: şüphe, öğüt, çığlık")).toBe("icindekiler-suphe-ogut-ciglik");
-    expect(slug("IŞIK")).toBe("isik");   // büyük I → ı → i
+    expect(slug("IŞIK")).toBe("isik");   // capital I → ı → i
   });
   it("sembolleri ve baştaki/sondaki tireleri atar", () => {
     expect(slug("Neden 1/√head_dim?")).toBe("neden-1-head-dim");

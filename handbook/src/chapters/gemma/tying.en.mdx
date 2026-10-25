@@ -1,0 +1,74 @@
+import { Callout, Fig, Predict, S, Impact } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { ManimVideo } from "../../components/misc";
+import { ObjectDiagram, TyingFacts, LogitMemory, LogitPrecision } from "./w/Tying";
+import { TyingScene } from "./w/Scenes3D";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { Link } from "react-router-dom";
+
+# lm_head and weight tying
+
+<p className="lead">The model's largest single matrix does two jobs: at the input it turns tokens into vectors, at the output it turns vectors into token scores. Not two <code>nn.Linear</code>s, but two <b>names</b> for one object.</p>
+
+## One plate, two roles
+
+<Scrolly label="One matrix, two jobs" figure={(s) => <TyingScene step={s} />}>
+<Step>
+**The table.** A single matrix of size <S s="V, D" ax="V,D" />: each row is a token's vector. 10 × 6 here, 257216 × 2048 in reality (527 M numbers). Hover the cubes to see their values.
+</Step>
+<Step>
+**At the input: a dictionary.** `embed_tokens(id)` computes nothing: if id = 3 it takes row 3 and hands it to the stream. Watch the copy of the row fly to the left. This is indexing: <span className="mono">W[ids]</span>.
+</Step>
+<Step>
+**At the output: a yardstick.** The last hidden state (orange) is dotted with every row of the **same** matrix: <span className="mono">logits = norm(h) @ Wᵀ</span>. The bars on the right are the logits. The longest (highlighted) is the row most similar to h, i.e. the next token.
+</Step>
+<Step>
+**Two roles, one object.** The tensor that picks rows at the input is the same one that produces scores at the output. The model learns a token's embedding as the direction the stream has to reach when it wants to produce that token. On top of that, 527 M parameters are saved.
+</Step>
+</Scrolly>
+
+<CodeWalk file="gemma.py" symbol="GemmaForCausalLM" notes={[
+  { match: "self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)", title: "a temporary lm_head", text: <><code>nn.Linear(2048, 257216)</code>: the weight has shape <S s="257216, 2048" ax="V,D" />, the <b>same</b> as the embedding table. A PyTorch Linear stores its weight as [out, in], so no transpose is needed: <code>h @ W.T</code>. This object is short-lived; <code>tie_weights</code> replaces it.</> },
+  { match: "def tie_weights(self)", title: "tie_weights", text: <>Who calls it? <code>PaliGemmaForConditionalGeneration.__init__</code>, at the very end. <code>check_gemma.py</code> calls it by hand.</> },
+  { match: "self.lm_head.weight = self.model.embed_tokens.weight", title: "binding the object", text: <><code>nn.Module.__setattr__</code> catches the assignment of a <code>Parameter</code> and registers it. No value is copied; both names point to the same object. See the object diagram below.</> },
+  { match: "logits = self.lm_head(hidden_states)", title: "logits", text: <><S s="B, T, 2048" ax="B,T,D" /> → <S s="B, T, 257216" ax="B,T,V" />. A score for every vocabulary token at every position. The most expensive matmul in this model: 260 × 2048 × 257216 ≈ 137 G multiplications.</> },
+  { match: "return logits.float()", title: ".float()", text: <>bf16 logits are too coarse for softmax. See the precision calculation below. HF does the same.</> },
+]} />
+
+<CodeWalk file="paligemma.py" symbol="PaliGemmaForConditionalGeneration.tie_weights" />
+
+## What does "the same object" mean in Python?
+
+<Fig caption={<><b>Two names, one object.</b> Step through the tabs. The fourth one shows a common mistake.</>}>
+<ObjectDiagram />
+</Fig>
+
+<Predict q="After tie_weights, how many [257216, 2048] tensors does model.parameters() return? How many keys does state_dict() have?">
+<code>parameters()</code> returns <b>one</b>: it does not count the same object twice. <code>state_dict()</code> returns <b>two</b> keys (<code>model.embed_tokens.weight</code> and <code>lm_head.weight</code>), both pointing to the same memory. Measured on the toy model: 9.70 M parameters before tying, 9.57 M after. The difference is 512 × 256 = 131 K, exactly one table.
+</Predict>
+
+## The real checkpoint has no lm_head
+
+<Fig caption={<><b>A note on loading weights.</b> Google's checkpoint stores the tied tensor once. The model's <code>state_dict()</code> produces two keys.</>}>
+<TyingFacts />
+</Fig>
+
+<Callout kind="dikkat" title="When loading the real weights">
+Calling <code>load_state_dict</code> directly with the checkpoint file and the default <code>strict=True</code> would raise <b>"missing key: language_model.lm_head.weight"</b>. The project's <code>load_hf_weights</code> takes the weights from the HF model's <code>state_dict()</code> (where the tied tensor shows up under both keys), translates the names, raises if the key sets do not match exactly, and calls <code>tie_weights()</code> again at the end. After loading, <code>lm_head.weight is embed_tokens.weight</code> is still True.
+</Callout>
+
+## logits.float(): memory and precision
+
+<Fig caption={<><b>The size of the logits tensor.</b> T × 257216 grows fast. At 896 px, float32 logits for the whole sequence exceed 4 GB. Generation only needs the logits of the last position, which is why HF has a <code>logits_to_keep</code> parameter.</>}>
+<LogitMemory />
+</Fig>
+
+<Fig caption={<><b>How coarse bf16 logits are.</b> Logits are typically in the range 10–40. There, bf16's step size is 0.0625–0.25. In softmax, probabilities scale with the exponential of logit differences, so a single rounding can shift a probability by 6–28%. In greedy decoding, if two candidates are close, even their order can change.</>}>
+<LogitPrecision />
+</Fig>
+
+<Impact from="gemma.py: return logits.float()" to="greedy decode: token-for-token match with HF">
+With the real weights, the project's greedy generation matches HF token for token. Both take the argmax over float32 logits. With bf16 logits, candidates with equal scores could pick different tokens.
+</Impact>
+
+<ManimVideo scene="WeightTying" caption="The same matrix: picking a row at the input, multiplying by the transpose at the output." />

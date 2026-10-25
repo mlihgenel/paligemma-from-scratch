@@ -1,5 +1,5 @@
-// Scrollytelling: solda kayan adımlar, sağda sabit (sticky) figür.
-// Figür aktif adımın indeksini ve adım içi ilerlemeyi (0–1) alır.
+// Scrollytelling: scrolling steps on the left, a sticky figure on the right.
+// The figure receives the active step's index and the in-step progress (0–1).
 import { Children, ReactElement, ReactNode, isValidElement, useEffect, useRef, useState } from "react";
 
 export function Step({ children }: { children: ReactNode; title?: string }) {

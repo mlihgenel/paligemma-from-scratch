@@ -1,0 +1,87 @@
+import { Callout, Fig, Predict, S, Impact, ConceptQ } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { BreakIt, ShapeTrace } from "../../components/misc";
+import { HeadMap, KvCacheSize, OrderMap, ExpandMemory } from "./w/Mqa";
+import { Link } from "react-router-dom";
+
+# MQA and repeat_kv
+
+<p className="lead">Gemma 2B's attention has 8 query heads but only <b>1</b> head for keys and values. The saving comes from memory, not compute. <code>repeat_kv</code> is a small function that "expands" the single KV head to the 8 query heads at compute time.</p>
+
+## Heads and sharing
+
+In classic multi-head attention Q, K and V all have the same number of heads: each head produces its own query, key and value. Gemma 2B does this instead:
+
+- **Q**: 8 heads of 256 dims each. `q_proj`: 2048 → 8 × 256.
+- **K and V**: 1 head. `k_proj`, `v_proj`: 2048 → 1 × 256.
+
+This is called **multi-query attention** (MQA). The cases in between (e.g. 2 KV heads for 8 Q heads) are **grouped-query attention** (GQA). All of them are settings of one idea: <span className="mono">n_rep = n_heads / n_kv_heads</span> Q heads share one KV head.
+
+<Fig wide caption={<><b>Which query head uses which KV head?</b> Hover a Q head: the heads sharing the same KV head light up. Switch from MHA to MQA with the buttons. Gemma 2B is on the far right; Gemma 2's 2B model, with 4 KV heads, is the GQA case in between.</>}>
+<HeadMap />
+</Fig>
+
+## Where is the saving?
+
+At first glance one might think "K and V got smaller, so the matrix multiplications got smaller". But every Q head still produces a full score table: 8 <span className="mono">q @ kᵀ</span> products for 8 heads. The number of operations for the scores stays the same under MQA.
+
+The gain is in two places:
+
+1. **Parameters**: `k_proj` and `v_proj` are 8× smaller.
+2. **KV cache**: when generating text, K and V are **stored** for every token in every layer. What is stored is proportional to the number of KV heads: 8× less under MQA.
+
+<Fig caption={<><b>KV cache, bf16.</b> The slider is the sequence length. PaliGemma at 224 px has 256 image tokens and a few text tokens, around 260 in total. As the sequence grows, the difference goes from megabytes to gigabytes.</>}>
+<KvCacheSize />
+</Fig>
+
+<Predict q="Q keeps 8 heads but K and V drop to 1. How does the number of operations for the scores (q @ kᵀ) compare with MHA?" hint="Every Q head still produces a full T × T score table.">
+<b>The same</b>. 8 heads × T × T × 256 multiply-adds, whatever the number of K heads. K having one head only means that head is <i>read</i> 8 times. That is why the real gain of GQA/MQA is <b>memory and memory traffic</b> (especially the KV cache), not compute.
+</Predict>
+
+## repeat_kv
+
+The scores are computed with `q @ k.transpose(2, 3)`. For that matmul, Q and K must have matching head counts. So just before the scores, each KV head is **repeated** once per Q head that uses it.
+
+<CodeWalk file="gemma.py" symbol="repeat_kv" notes={[
+  { match: "B, n_kv_heads, T, head_dim = x.shape", title: "input", text: <>K or V, <S s="B, n_kv, T, hd" ax="B,H,T,hd" />. In Gemma 2B, <S s="1, 1, 260, 256" ax="B,H,T,hd" />.</> },
+  { match: "if n_rep == 1:", title: "no repeat needed", text: <>With MHA (<code>n_kv = n_heads</code>) do nothing. Avoids a needless copy.</> },
+  { match: "x = x[:, :, None, :, :].expand(", title: "a new axis in between", text: <><S s="B, n_kv, T, hd" ax="B,H,T,hd" /> → <S s="B, n_kv, 1, T, hd" /> → <S s="B, n_kv, n_rep, T, hd" />. <code>expand</code> copies no data: the new axis has stride 0, so the same data "appears" n_rep times.</> },
+  { match: "return x.reshape(B, n_kv_heads * n_rep", title: "merge the axes", text: <>(n_kv, n_rep) become a single head axis: <S s="B, n_heads, T, hd" ax="B,H,T,hd" />. <b>The order matters</b>: n_rep sits to the right of n_kv, so Q head h uses KV head <code>h // n_rep</code>.</> },
+]} />
+
+<ShapeTrace start={{ shape: "1, 1, 260, 256", ax: "B,H,T,hd", label: "k (Gemma 2B, after the projection)" }} steps={[
+  { op: "x[:, :, None]", code: "x[:, :, None, :, :]", shape: "1, 1, 1, 260, 256", ax: "B,H,P,T,hd", note: "an axis of size 1 in between" },
+  { op: ".expand(…, n_rep = 8, …)", code: ".expand(B, 1, 8, T, hd)", shape: "1, 1, 8, 260, 256", ax: "B,H,P,T,hd", note: "stride 0: no data copied" },
+  { op: ".reshape(B, 8, T, hd)", code: ".reshape(B, n_kv * n_rep, T, hd)", shape: "1, 8, 260, 256", ax: "B,H,T,hd", note: "the same head count as Q" },
+]} />
+
+## Axis order: a silent bug
+
+There are two possible orders for the merge, and both give the same shape. One is the layout the weights expect; the other connects the Q heads to the KV heads alternately. The difference only shows when n_kv &gt; 1. Gemma 2B has n_kv = 1, so this bug would <b>go unnoticed</b> there, but it would silently break Gemma 2 (4 KV heads). That is why the check tries GQA as well as MQA.
+
+<BreakIt title="merge the axes in the order (n_rep, n_kv) instead of (n_kv, n_rep) (8 Q, 2 KV heads)"
+  good={`x = x[:, :, None, :, :].expand(B, n_kv, n_rep, T, hd)   # ← the new axis to the RIGHT of n_kv
+x.reshape(B, n_kv * n_rep, T, hd)             # Q0-Q3 → KV0, Q4-Q7 → KV1`}
+  bad={`x = x[:, None, :, :, :].expand(B, n_rep, n_kv, T, hd)   # ← the new axis to the LEFT of n_kv
+x.reshape(B, n_rep * n_kv, T, hd)             # Q0 → KV0, Q1 → KV1, Q2 → KV0, …`}
+  result={(b) => <OrderMap wrong={b} />} />
+
+## When does expand copy?
+
+`expand` copies no data, while `reshape` returns a view or a copy depending on the axes being merged. Measured with the project's `repeat_kv`:
+
+<Fig caption={<><b>Nothing is copied under MQA, a copy is made under GQA.</b> With n_kv = 1 one of the two merged axes already has length 1, so <code>reshape</code> can return a view without allocating memory. With n_kv = 2 the (n_kv, n_rep) axes are merged by copying, because the memory layout is not contiguous. In both cases the <b>stored</b> K/V are small, because the repeat only happens at compute time.</>}>
+<ExpandMemory />
+</Fig>
+
+<ConceptQ n={3} q="What does GQA/MQA reduce: compute or memory?">
+<b>Memory</b>: the KV cache and the K/V projection weights. The scores are still computed for every Q head. During text generation (one token per step) the bottleneck is not compute anyway, but <i>reading</i> the KV cache from memory. MQA reduces that reading, so generation gets faster.
+</ConceptQ>
+
+<Callout kind="dikkat" title="head_dim comes from the config">
+In Gemma 2B, <code>8 × 256 = 2048 = hidden_size</code>, so computing <code>head_dim</code> as <code>hidden_size / n_heads</code> happens to be right. In Gemma 2 it is not (<code>8 × 256 ≠ 2304</code>). That is why <code>GemmaAttention</code> reads <code>head_dim</code> from the config and <code>o_proj</code>'s input is <code>n_heads × head_dim</code>. The next page has <Link to="/gemma/attention">attention as a whole</Link>.
+</Callout>
+
+<Impact from="gemma.py: repeat_kv(k, n_rep)" to="KV cache: the stored tensor">
+The KV cache stores K and V <b>before repeat_kv</b> (1 head). Storing the expanded version would cost 8× the memory and throw away the whole gain of MQA (<Link to="/gemma/kv-cache">4.12</Link>).
+</Impact>

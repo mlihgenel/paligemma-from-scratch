@@ -13,7 +13,7 @@ import { Link } from "react-router-dom";
 
 ## Klasik MLP ve gated MLP
 
-SigLIP'te yazdığın MLP klasik: <span className="mono">fc2(gelu(fc1(x)))</span>. Tek bir yol var: genişlet, aktivasyon, daralt. Gemma'nın MLP'si ise:
+SigLIP'teki MLP klasik: <span className="mono">fc2(gelu(fc1(x)))</span>. Tek bir yol var: genişlet, aktivasyon, daralt. Gemma'nın MLP'si ise:
 
 $$
 \mathrm{MLP}(x) = W_{\text{down}}\Big(\,\mathrm{GELU}(W_{\text{gate}}\,x) \;\odot\; W_{\text{up}}\,x\,\Big)
@@ -48,7 +48,7 @@ $$
   { match: "gate = self.gate_proj(x)", title: "gate", text: <><S s="B, T, 2048" ax="B,T,D" /> → <S s="B, T, 16384" ax="B,T,I" />. Linear sadece <b>son ekseni</b> dönüştürüyor. B ve T eksenleri olduğu gibi kalıyor, yani her token ayrı ayrı çarpılıyor.</> },
   { match: "up = self.up_proj(x)", title: "up", text: <>Aynı girdi, ikinci yol. <S s="B, T, 16384" ax="B,T,I" />.</> },
   { match: "h = F.gelu(gate, approximate=\"tanh\") * up", title: "kapı ⊙ değer", text: <>GELU <b>sadece gate'e</b> uygulanıyor. <code>approximate="tanh"</code> şart: HF config'inde <code>hidden_activation="gelu_pytorch_tanh"</code>. <code>*</code> eleman eleman çarpım, iki <S s="B, T, 16384" ax="B,T,I" /> tensör.</> },
-  { match: "return self.down_proj(h)", title: "daralt", text: <><S s="B, T, 16384" ax="B,T,I" /> → <S s="B, T, 2048" ax="B,T,D" />. Bu çıktı katmanda akışa eklenecek (<Link to="/gemma/akis">4.2</Link>).</> },
+  { match: "return self.down_proj(h)", title: "daralt", text: <><S s="B, T, 16384" ax="B,T,I" /> → <S s="B, T, 2048" ax="B,T,D" />. Bu çıktı katmanda akışa eklenecek (<Link to="/gemma/residual">4.2</Link>).</> },
 ]} />
 
 ## Kapının içine bak

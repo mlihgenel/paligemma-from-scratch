@@ -1,5 +1,5 @@
-// "Bu sayfada" listesinin verisi: sayfadaki h2 başlıkları ve kaydırırken hangisinde olduğumuz.
-// Durum küçük bir store'da duruyor: PageView (ve içindeki ağır widget'lar) kaydırırken yeniden çizilmesin.
+// Data for the "On this page" list: the page's h2 headings and which one we are in while scrolling.
+// The state lives in a small store so PageView (and its heavy widgets) do not re-render on scroll.
 import { useEffect } from "react";
 import { create } from "zustand";
 
@@ -7,35 +7,35 @@ export interface Section { id: string; text: string }
 
 interface SectionsState {
   sections: Section[];
-  active: string;     // üst çubuğun altından geçmiş son başlığın id'si, hiçbiri geçmediyse ""
+  active: string;     // id of the last heading that passed under the top bar, "" if none has
 }
 
 export const useSectionsStore = create<SectionsState>(() => ({ sections: [], active: "" }));
 
-/** Başlık metninden id: Türkçe harfler sadeleşir ("Neden 1/√head_dim?" → "neden-1-head-dim"). Boş kalabilir. */
+/** Id from heading text: Turkish letters are simplified ("Neden 1/√head_dim?" → "neden-1-head-dim"). May be empty. */
 export function slug(text: string): string {
   return text
     .toLocaleLowerCase("tr")                 // İ → i, I → ı
     .normalize("NFD").replace(/[̀-ͯ]/g, "")   // ş → s, ğ → g, ü → u, ö → o, ç → c
-    .replace(/ı/g, "i")                      // ı'nın ayrışımı yok
+    .replace(/ı/g, "i")                      // ı has no decomposition
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
 
-/** base çakışıyorsa -2, -3 ... ekler */
+/** Appends -2, -3 ... if base is taken */
 export function uniqueId(base: string, taken: (id: string) => boolean): string {
   let id = base, n = 2;
   while (taken(id)) id = `${base}-${n++}`;
   return id;
 }
 
-/** Üst çubuk 52 px. Başlığın üstü bu çizgiyi geçince "o bölümdeyiz" sayıyoruz */
+/** The top bar is 52 px. Once a heading's top passes this line we count it as "in that section" */
 const ACTIVE_LINE = 120;
 
 const HEADINGS = "article.prose h2";
 
-/** Sayfa değişince başlıkları toplar, id atar ve kaydırmayı izler. PageView'da bir kez çağrılır, state tutmaz. */
-export function useSectionsTracker(path: string) {
+/** Collects the headings when the page changes, assigns ids and tracks scrolling. Called once in PageView, holds no state. */
+export function useSectionsTracker(path: string, lang = "") {
   useEffect(() => {
     const set = useSectionsStore.setState;
     set({ sections: [], active: "" });
@@ -43,14 +43,14 @@ export function useSectionsTracker(path: string) {
 
     const headings = () => Array.from(document.querySelectorAll<HTMLElement>(HEADINGS)).filter((h) => !h.closest(".fig"));
 
-    // MDX tembel yükleniyor ve widget'lar DOM'u değiştiriyor: başlıkları her değişiklikte yeniden topluyoruz (ucuz)
+    // MDX loads lazily and widgets change the DOM: collect the headings again on every change (cheap)
     const collect = () => {
       const hs = headings();
       const taken = new Set(hs.map((h) => h.id).filter(Boolean));
       const list = hs.map((h) => {
         const text = (h.textContent || "").trim();
         if (!h.id) {
-          h.id = uniqueId(slug(text) || "bolum", (id) => taken.has(id) || !!document.getElementById(id));
+          h.id = uniqueId(slug(text) || "section", (id) => taken.has(id) || !!document.getElementById(id));
           taken.add(h.id);
         }
         return { id: h.id, text };
@@ -81,10 +81,10 @@ export function useSectionsTracker(path: string) {
       mo.disconnect(); clearTimeout(timer); if (raf) cancelAnimationFrame(raf);
       window.removeEventListener("scroll", schedule); window.removeEventListener("resize", schedule);
     };
-  }, [path]);
+  }, [path, lang]);
 }
 
-/** Bölüme kaydır ve adresi paylaşılabilir yap: #/yol#bolum (router bu biçimi zaten anlıyor) */
+/** Scroll to a section and make the address shareable: #/path#section (the router already understands this form) */
 export function goToSection(id: string, pathname: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   history.replaceState(null, "", `#${pathname}#${id}`);

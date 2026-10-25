@@ -1,4 +1,4 @@
-// Bir öğenin ekran görüntüsü: node e2e/el.mjs <çıktı.png> <yol> <css seçici> [sıra] [--dark] [--click=seçici]
+// Screenshot of one element: node e2e/el.mjs <out.png> <path> <css selector> [index] [--dark] [--click=selector]
 import { chromium } from "@playwright/test";
 const [out, path, sel, nth = "0", ...rest] = process.argv.slice(2);
 const dark = rest.includes("--dark");

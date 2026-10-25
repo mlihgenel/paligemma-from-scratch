@@ -1,7 +1,8 @@
-// Senin src/ kodun, canlı. Not'lu satırlara tıklayınca açıklama açılır ve (varsa) görsel o adıma geçer.
+// The project's src/ code, live. Clicking a line with a note opens its explanation and (if any) moves the figure to that step.
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import type { HighlighterGeneric } from "shiki";
 import { DIRS, findSymbol } from "../lib/pysource";
+import { useT } from "../i18n";
 
 let hlPromise: Promise<HighlighterGeneric<any, any>> | null = null;
 function highlighter() {
@@ -15,7 +16,7 @@ interface Props {
   file: string;
   symbol: string;
   notes?: Note[];
-  active?: string;                       // dışarıdan seçili adım
+  active?: string;                       // step selected from outside
   onStep?: (step: string) => void;
   withComments?: boolean;
   maxHeight?: number;
@@ -26,6 +27,7 @@ export function CodeWalk({ file, symbol, notes = [], active, onStep, withComment
   const snip = useMemo(() => findSymbol(file, symbol, withComments), [file, symbol, withComments]);
   const [tokens, setTokens] = useState<any[][] | null>(null);
   const [sel, setSel] = useState<number | null>(null);
+  const t = useT();
 
   useEffect(() => {
     let alive = true;
@@ -37,7 +39,7 @@ export function CodeWalk({ file, symbol, notes = [], active, onStep, withComment
     return () => { alive = false; };
   }, [snip]);
 
-  // Her not, metni içeren ilk satıra bağlanır
+  // Each note attaches to the first line that contains its text
   const noteAt = useMemo(() => {
     const m = new Map<number, Note>();
     const missing: Note[] = [];
@@ -48,7 +50,7 @@ export function CodeWalk({ file, symbol, notes = [], active, onStep, withComment
     return { m, missing };
   }, [notes, snip]);
 
-  // Dışarıdan gelen adım -> o adımın satırını seç
+  // Step from outside -> select that step's line
   useEffect(() => {
     if (!active) return;
     for (const [i, n] of noteAt.m) if (n.step === active) { setSel(i); return; }
@@ -62,7 +64,7 @@ export function CodeWalk({ file, symbol, notes = [], active, onStep, withComment
       <div className="cw">
         <div className="cw-head">
           <span className="mono"><span className="muted">{DIRS[file] ?? "src"}/</span><b>{file}</b> <span className="muted">· {symbol}</span></span>
-          <span className="muted mono">{snip.found ? `satır ${snip.start}–${snip.end}` : "bulunamadı"}</span>
+          <span className="muted mono">{snip.found ? `${t("lines", "satır")} ${snip.start}–${snip.end}` : t("not found", "bulunamadı")}</span>
         </div>
         <div className={hasNotes ? "cw-grid" : ""}>
           <pre className="cw-code" style={{ maxHeight }}>
@@ -85,22 +87,22 @@ export function CodeWalk({ file, symbol, notes = [], active, onStep, withComment
             <div className="cw-note">
               {selNote ? (
                 <>
-                  <div className="eyebrow">{selNote.title ?? `satır ${snip.start + (sel ?? 0)}`}</div>
+                  <div className="eyebrow">{selNote.title ?? `${t("line", "satır")} ${snip.start + (sel ?? 0)}`}</div>
                   <div style={{ marginTop: 6 }}>{selNote.text}</div>
                   <div className="row" style={{ gap: 6, marginTop: 14 }}>
-                    <button className="btn" disabled={!prevNote(noteAt.m, sel)} onClick={() => go(prevNote(noteAt.m, sel))}>← Önceki</button>
-                    <button className="btn" disabled={!nextNote(noteAt.m, sel)} onClick={() => go(nextNote(noteAt.m, sel))}>Sonraki →</button>
+                    <button className="btn" disabled={!prevNote(noteAt.m, sel)} onClick={() => go(prevNote(noteAt.m, sel))}>← {t("Previous", "Önceki")}</button>
+                    <button className="btn" disabled={!nextNote(noteAt.m, sel)} onClick={() => go(nextNote(noteAt.m, sel))}>{t("Next", "Sonraki")} →</button>
                   </div>
                 </>
               ) : (
                 <div className="muted">
-                  <span style={{ color: "var(--accent)" }}>●</span> işaretli satırlara tıkla ya da{" "}
-                  <button className="btn" style={{ color: "var(--accent)", padding: "2px 4px" }} onClick={() => go(nextNote(noteAt.m, -1))}>baştan oku →</button>
+                  <span style={{ color: "var(--accent)" }}>●</span> {t("click a marked line or", "işaretli satırlara tıkla ya da")}{" "}
+                  <button className="btn" style={{ color: "var(--accent)", padding: "2px 4px" }} onClick={() => go(nextNote(noteAt.m, -1))}>{t("read from the top", "baştan oku")} →</button>
                 </div>
               )}
               {noteAt.missing.length > 0 && (
                 <div className="small" style={{ color: "var(--warn)", marginTop: 12 }}>
-                  Kodun değişmiş olabilir: {noteAt.missing.length} açıklama satırını bulamadı ({noteAt.missing.map((n) => `"${n.match}"`).join(", ")}).
+                  {t("The code may have changed", "Kodun değişmiş olabilir")}: {noteAt.missing.length} {t("note anchors not found", "açıklama satırı bulunamadı")} ({noteAt.missing.map((n) => `"${n.match}"`).join(", ")}).
                 </div>
               )}
             </div>

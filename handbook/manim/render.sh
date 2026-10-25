@@ -1,14 +1,16 @@
 #!/bin/bash
-# Manim sahnelerini render edip handbook/public/videos/ altına koyar.
-# Kullanım (proje kökünden): bash handbook/manim/render.sh [Sahne ...]
+# Renders the Manim scenes in both languages into handbook/public/videos/<Scene>.<lang>.mp4
+# Usage (from the project root): bash handbook/manim/render.sh [Scene ...]
 set -e
 cd "$(dirname "$0")/../.."
-SCENES=${@:-"ResidualHighway ScaleRoundTrip RMSNormGeometry GeGLUGating WeightTying ConvAsPatchLinear FlattenTranspose MultiHeadReshape"}
+SCENES=${@:-"ResidualHighway RMSNormGeometry GeGLUGating WeightTying ConvAsPatchLinear FlattenTranspose MultiHeadReshape"}
 OUT=handbook/public/videos
 MEDIA=handbook/manim/media
 mkdir -p "$OUT"
-for s in $SCENES; do
-  .venv/bin/python -m manim -qm --progress_bar none --media_dir "$MEDIA" --disable_caching handbook/manim/scenes.py "$s" >/dev/null
-  cp "$MEDIA/videos/scenes/720p30/$s.mp4" "$OUT/$s.mp4"
-  echo "$s -> $OUT/$s.mp4"
+for lang in en tr; do
+  for s in $SCENES; do
+    HANDBOOK_LANG=$lang .venv/bin/python -m manim -qm --progress_bar none --media_dir "$MEDIA" --disable_caching handbook/manim/scenes.py "$s" >/dev/null
+    cp "$MEDIA/videos/scenes/720p30/$s.mp4" "$OUT/$s.$lang.mp4"
+    echo "$s -> $OUT/$s.$lang.mp4"
+  done
 done

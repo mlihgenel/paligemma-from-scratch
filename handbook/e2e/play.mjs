@@ -1,4 +1,4 @@
-// Oyun alanının belirli aşamalarının ekran görüntüleri: node e2e/play.mjs <klasör> 0 2 3 8 12
+// Screenshots of chosen stops of the tour: node e2e/play.mjs <dir> 0 2 3 8 12
 import { chromium } from "@playwright/test";
 const [out, ...stages] = process.argv.slice(2);
 const browser = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });

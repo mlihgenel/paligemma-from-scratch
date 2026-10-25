@@ -1,4 +1,4 @@
-// public/data/*.json yükleyici. {"$bin", "shape", "dtype"} nesnelerini typed array'e çevirir.
+// Loader for public/data/*.json. Turns {"$bin", "shape", "dtype"} objects into typed arrays.
 import { useEffect, useState } from "react";
 
 export interface Arr { data: Float32Array | Uint8Array | Int32Array; shape: number[] }
@@ -36,7 +36,7 @@ async function resolve(node: any): Promise<any> {
 export function loadData<T = any>(name: string): Promise<T> {
   if (!cache.has(name)) {
     cache.set(name, fetch(BASE + name + ".json").then((r) => {
-      if (!r.ok) throw new Error(`${name}.json bulunamadı. handbook/export scriptlerini çalıştır.`);
+      if (!r.ok) throw new Error(`${name}.json not found. Run the handbook/export scripts.`);
       return r.json();
     }).then(resolve));
   }
@@ -53,7 +53,7 @@ export function useData<T = any>(name: string): { data: T | null; error: string 
   return state;
 }
 
-/** Arr'dan bir satır (son eksen boyunca) */
+/** One row of an Arr (along the last axis) */
 export function rowOf(a: Arr, ...idx: number[]): Float32Array {
   const shape = a.shape;
   const last = shape[shape.length - 1];

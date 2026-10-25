@@ -98,7 +98,7 @@ def main():
     })
     print(f"forward_ok={forward_ok} {forward_err or ''}")
     print(f"parameters: {n_unique/1e9:.3f}B unique, state_dict total {n_with_dup/1e9:.3f}B")
-    print(f"sadece bizde: {len(so - sc)} {sorted(so - sc)[:3]}  sadece checkpoint'te: {len(sc - so)} {sorted(sc - so)[:3]}")
+    print(f"only in ours: {len(so - sc)} {sorted(so - sc)[:3]}  only in the checkpoint: {len(sc - so)} {sorted(sc - so)[:3]}")
 
 
 if __name__ == "__main__":

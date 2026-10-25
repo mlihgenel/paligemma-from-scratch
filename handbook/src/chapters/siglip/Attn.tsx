@@ -1,4 +1,4 @@
-// Bölüm 2.3: attention'ın tensör koreografisi (3D), gerçek attention haritaları, PCA, parametreler
+// Chapter 2.3: the tensor choreography of attention (3D), real attention maps, PCA, parameters
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useData, Arr } from "../../lib/data";
 import { rng, softmax } from "../../lib/tensor";
@@ -7,6 +7,7 @@ import { Stage3D, Cubes, Cube, Tag, View, cssColor } from "../../interact/three"
 import { valueColor } from "../../interact/cells";
 import { Loading, Seg, Stat } from "../../components/ui";
 import { useStore } from "../../store";
+import { useT } from "../../i18n";
 
 const BASE = import.meta.env.BASE_URL + "data/";
 const TT = 4, DD = 6, HH = 2, HD = 3;
@@ -14,6 +15,7 @@ const vc = (v: number, m: number) => valueColor(v, m, document.documentElement.d
 const f2 = (v: number) => v.toFixed(2);
 
 export function AttentionScene({ step }: { step: number }) {
+  const tr = useT();
   const v = useMemo(() => {
     const r = rng(77);
     const mat = () => Array.from({ length: DD }, () => Array.from({ length: DD }, () => r.normal() * 0.6));
@@ -49,16 +51,16 @@ export function AttentionScene({ step }: { step: number }) {
     const s = v.scores[h][i][j], a = v.att[h][i][j];
     const soft = step >= 4;
     items.push({ id: `s${h}${i}${j}`, pos: at(1.2, 0.85 - h * 1.9, TT, TT, i, j), color: soft ? vc(a, 0.8) : vc(s, 2.5), hidden: step < 3, dim: step >= 6,
-      tip: () => soft ? <>softmax satır {i}: a[{i},{j}] = <b>{a.toFixed(3)}</b><div className="muted">satır toplamı = 1 · head {h}</div></> : <>skor[h={h}, {i}, {j}] = q{i}·k{j} / √{HD} = <b>{f2(s)}</b></> });
+      tip: () => soft ? <>softmax {tr("row", "satır")} {i}: a[{i},{j}] = <b>{a.toFixed(3)}</b><div className="muted">{tr("row sum", "satır toplamı")} = 1 · head {h}</div></> : <>{tr("score", "skor")}[h={h}, {i}, {j}] = q{i}·k{j} / √{HD} = <b>{f2(s)}</b></> });
   }
   for (let h = 0; h < HH; h++) for (let t = 0; t < TT; t++) for (let d = 0; d < HD; d++) {
     const val = v.ho[h][t][d];
     const pos: [number, number, number] = step >= 6 ? at(4.0, 0, TT, DD, t, h * HD + d) : at(3.5, 0.85 - h * 1.9, TT, HD, t, d);
     items.push({ id: `o${h}${t}${d}`, pos, color: vc(val, 2), hidden: step < 5, dim: step >= 7,
-      tip: () => <>(a @ v)[h={h}, t={t}, {d}] = Σⱼ a[t,j]·v[j] = <b>{f2(val)}</b>{step >= 6 && <div className="muted">birleşmiş: d = {h * HD + d}</div>}</> });
+      tip: () => <>(a @ v)[h={h}, t={t}, {d}] = Σⱼ a[t,j]·v[j] = <b>{f2(val)}</b>{step >= 6 && <div className="muted">{tr("merged", "birleşmiş")}: d = {h * HD + d}</div>}</> });
   }
   for (let t = 0; t < TT; t++) for (let d = 0; d < DD; d++)
-    items.push({ id: `f${t}${d}`, pos: at(6.6, 0, TT, DD, t, d), color: vc(v.out[t][d], 2.5), hidden: step < 7, tip: () => <>out_proj çıkışı [t={t}, d={d}] = <b>{f2(v.out[t][d])}</b></> });
+    items.push({ id: `f${t}${d}`, pos: at(6.6, 0, TT, DD, t, d), color: vc(v.out[t][d], 2.5), hidden: step < 7, tip: () => <>out_proj {tr("output", "çıkışı")} [t={t}, d={d}] = <b>{f2(v.out[t][d])}</b></> });
   const views: View[] = [
     { pos: [-4.6, 0.6, 6.2], target: [-5.0, 0, 0] },
     { pos: [-3.0, 0.8, 8.0], target: [-3.4, 0, 0] },
@@ -82,8 +84,9 @@ export function AttentionScene({ step }: { step: number }) {
   );
 }
 
-/* ---------------- gerçek attention haritaları ---------------- */
+/* ---------------- real attention maps ---------------- */
 export function AttnMapExplorer() {
+  const tr = useT();
   const { data, error } = useData<any>("pipeline");
   const { imageIdx } = useStore();
   const [layer, setLayer] = useState(5);
@@ -106,7 +109,7 @@ export function AttnMapExplorer() {
     for (let i = 0; i < n * n; i++) { const t = Math.sqrt(row[i] / (mx || 1)); img.data[i * 4] = 255; img.data[i * 4 + 1] = 120; img.data[i * 4 + 2] = 40; img.data[i * 4 + 3] = Math.round(t * 230); }
     ctx.putImageData(img, 0, 0);
   }, [row]);
-  if (!data || !row) return <Loading what="attention haritaları" error={error} />;
+  if (!data || !row) return <Loading what={tr("attention maps", "attention haritaları")} error={error} />;
   const top = Array.from(row).map((v, i) => [v, i] as [number, number]).sort((a, b) => b[0] - a[0]).slice(0, 5);
   const headsOk = data.attn_layers.includes(layer);
   return (
@@ -117,29 +120,29 @@ export function AttnMapExplorer() {
           <canvas ref={cv} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", imageRendering: "pixelated", mixBlendMode: "multiply" }} />
           <div style={{ position: "absolute", left: `${((q % n) / n) * 100}%`, top: `${(Math.floor(q / n) / n) * 100}%`, width: `${100 / n}%`, height: `${100 / n}%`, outline: "2px solid var(--accent)", outlineOffset: -1 }} />
         </div>
-        <div className="small muted" style={{ marginTop: 4 }}>sorgu yaması ({Math.floor(q / n)}, {q % n}) · turuncu: bu yamanın baktığı yerler</div>
+        <div className="small muted" style={{ marginTop: 4 }}>{tr("query patch", "sorgu yaması")} ({Math.floor(q / n)}, {q % n}) · {tr("orange: where this patch looks", "turuncu: bu yamanın baktığı yerler")}</div>
       </div>
       <div>
-        <label className="small" style={{ display: "flex", gap: 10, alignItems: "center" }}>katman <input type="range" min={0} max={11} value={layer} onChange={(e) => setLayer(+e.target.value)} style={{ flex: 1 }} /> <b className="mono">{layer}</b></label>
+        <label className="small" style={{ display: "flex", gap: 10, alignItems: "center" }}>{tr("layer", "katman")} <input type="range" min={0} max={11} value={layer} onChange={(e) => setLayer(+e.target.value)} style={{ flex: 1 }} /> <b className="mono">{layer}</b></label>
         <div style={{ marginTop: 10 }}>
           {headsOk ? (
             <select value={String(head)} onChange={(e) => setHead(e.target.value === "ort" ? "ort" : +e.target.value)}>
-              <option value="ort">12 head'in ortalaması</option>
+              <option value="ort">{tr("mean of the 12 heads", "12 head'in ortalaması")}</option>
               {Array.from({ length: 12 }, (_, h) => <option key={h} value={h}>head {h}</option>)}
             </select>
-          ) : <span className="small muted">Bu katmanda sadece head ortalaması var (head'ler: katman 0, 5, 11)</span>}
+          ) : <span className="small muted">{tr("Only the head mean is stored for this layer (heads: layers 0, 5, 11)", "Bu katmanda sadece head ortalaması var (head'ler: katman 0, 5, 11)")}</span>}
         </div>
         <div className="stats">
-          <Stat label="kendine bakış" value={`${(row[q] * 100).toFixed(1)}%`} />
-          <Stat label="en yüksek 5 yama toplamı" value={`${(top.reduce((a, b) => a + b[0], 0) * 100).toFixed(0)}%`} sub="196 yama içinde" />
+          <Stat label={tr("attention to itself", "kendine bakış")} value={`${(row[q] * 100).toFixed(1)}%`} />
+          <Stat label={tr("top 5 patches combined", "en yüksek 5 yama toplamı")} value={`${(top.reduce((a, b) => a + b[0], 0) * 100).toFixed(0)}%`} sub={tr("out of 196 patches", "196 yama içinde")} />
         </div>
-        <p className="small muted" style={{ marginTop: 10 }}>siglip-base (16 px yama, 14 × 14) ağırlıklarıyla, senin <code>SiglipAttention</code>'ının q/k projeksiyonlarından hesaplandı. Genellikle erken katmanlar komşulara, derin katmanlar anlamca ilgili uzak yamalara bakıyor. Head'leri karşılaştır: her biri farklı bir "soru" soruyor.</p>
+        <p className="small muted" style={{ marginTop: 10 }}>{tr(<>Computed with the siglip-base weights (16 px patches, 14 × 14) from the q/k projections of <code>SiglipAttention</code>. Early layers usually look at neighbors, deeper layers at related patches further away. Compare the heads: each asks a different "question".</>, <>siglip-base (16 px yama, 14 × 14) ağırlıklarıyla, <code>SiglipAttention</code>'ın q/k projeksiyonlarından hesaplandı. Genellikle erken katmanlar komşulara, derin katmanlar anlamca ilgili uzak yamalara bakıyor. Head'leri karşılaştır: her biri farklı bir "soru" soruyor.</>)}</p>
       </div>
     </div>
   );
 }
 
-/* ---------------- PCA: ilk katman ve son katman ---------------- */
+/* ---------------- PCA: first and last layer ---------------- */
 function PcaMap({ rgb }: { rgb: number[][] }) {
   const cv = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -152,6 +155,7 @@ function PcaMap({ rgb }: { rgb: number[][] }) {
   return <canvas ref={cv} style={{ width: "100%", aspectRatio: "1", imageRendering: "pixelated", borderRadius: 3, display: "block" }} />;
 }
 export function PcaCompare() {
+  const tr = useT();
   const { data, error } = useData<any>("pipeline");
   const { imageIdx } = useStore();
   if (!data) return <Loading what="PCA" error={error} />;
@@ -159,14 +163,15 @@ export function PcaCompare() {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 18, maxWidth: 760 }}>
       <div><img src={`${BASE}img_${im.name}_224.png`} style={{ width: "100%", borderRadius: 3, display: "block" }} /><div className="small muted" style={{ marginTop: 4 }}>girdi</div></div>
-      <div><PcaMap rgb={im.pca_embed} /><div className="small muted" style={{ marginTop: 4 }}>embedding sonrası (katman 0)</div></div>
-      <div><PcaMap rgb={im.pca_last} /><div className="small muted" style={{ marginTop: 4 }}>son katman + post_layernorm</div></div>
+      <div><PcaMap rgb={im.pca_embed} /><div className="small muted" style={{ marginTop: 4 }}>{tr("after the embedding (layer 0)", "embedding sonrası (katman 0)")}</div></div>
+      <div><PcaMap rgb={im.pca_last} /><div className="small muted" style={{ marginTop: 4 }}>{tr("last layer + post_layernorm", "son katman + post_layernorm")}</div></div>
     </div>
   );
 }
 
-/* ---------------- parametre dağılımı ---------------- */
+/* ---------------- parameter breakdown ---------------- */
 export function SiglipParams() {
+  const tr = useT();
   const { data, error } = useData<any>("model_tree");
   if (!data) return <Loading what="parametreler" error={error} />;
   const g = (n: string) => data.nodes.find((x: any) => x.name === n)?.params ?? 0;
@@ -178,10 +183,10 @@ export function SiglipParams() {
       <Bars items={[
         { label: "27 × attention (q, k, v, out)", value: attn * 27, color: "var(--ax-T)" },
         { label: "27 × MLP (fc1, fc2)", value: mlp * 27, color: "var(--ax-D)" },
-        { label: "embeddings (Conv2d + konum)", value: emb, color: "var(--ax-V)" },
+        { label: tr("embeddings (Conv2d + position)", "embeddings (Conv2d + konum)"), value: emb, color: "var(--ax-V)" },
         { label: "54 LayerNorm + post_layernorm", value: ln * 27 + g("vision_tower.vision_model.post_layernorm"), color: "var(--ax-hd)" },
       ]} fmt={(v) => (v / 1e6).toFixed(1) + " M"} />
-      <div className="small muted" style={{ marginTop: 8 }}>Katman başına: attention 4 · 1152² + 4 · 1152 = {(attn / 1e6).toFixed(2)} M, MLP 2 · 1152 · 4304 + 4304 + 1152 = {(mlp / 1e6).toFixed(2)} M. Toplam {(g("vision_tower") / 1e6).toFixed(1)} M ("So400m").</div>
+      <div className="small muted" style={{ marginTop: 8 }}>{tr("Per layer", "Katman başına")}: attention 4 · 1152² + 4 · 1152 = {(attn / 1e6).toFixed(2)} M, MLP 2 · 1152 · 4304 + 4304 + 1152 = {(mlp / 1e6).toFixed(2)} M. {tr("Total", "Toplam")} {(g("vision_tower") / 1e6).toFixed(1)} M ("So400m").</div>
     </div>
   );
 }

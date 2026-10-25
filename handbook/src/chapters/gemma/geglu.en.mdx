@@ -1,0 +1,84 @@
+import { Callout, Fig, Predict, S, Impact } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { ManimVideo } from "../../components/misc";
+import { GateMaps, MlpParams } from "./w/Glu";
+import { MlpScene } from "./w/Scenes3D";
+import { GeluPlane } from "./w/Planes";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { Link } from "react-router-dom";
+
+# The GeGLU MLP
+
+<p className="lead">Two thirds of the model live in this class. Its job is simple: widen each token from 2048 to 16384 and narrow it back, one token at a time. The difference from a classic MLP is that the widening happens along two separate paths, and one of them opens and closes the other like a <b>gate</b>.</p>
+
+## Classic MLP vs gated MLP
+
+The MLP in SigLIP is classic: <span className="mono">fc2(gelu(fc1(x)))</span>. One path: widen, activate, narrow. Gemma's MLP is:
+
+$$
+\mathrm{MLP}(x) = W_{\text{down}}\Big(\,\mathrm{GELU}(W_{\text{gate}}\,x) \;\odot\; W_{\text{up}}\,x\,\Big)
+$$
+
+There are two parallel widenings. **up** carries "what passes" (linear, no activation). **gate** decides "how much passes" (it goes through GELU). ⊙ is the elementwise product. If the gate is ≈ 0, nothing passes in that dim, whatever up's value is.
+
+<Scrolly label="GemmaMLP, three tokens" figure={(s) => <MlpScene step={s} />}>
+<Step>
+**Input.** The normalized stream: 3 tokens × 4 dims (really <S s="T, 2048" ax="T,D" />). Each cube is a number, the color shows the value. Hover to see it.
+</Step>
+<Step>
+**Two parallel widenings.** The same x passes through two separate weight plates: `gate_proj` (pink) and `up_proj` (orange). Both outputs are <S s="T, I" ax="T,I" />: 8 here, 16384 in reality. A Linear only transforms the last axis; tokens do not mix.
+</Step>
+<Step>
+**The gate.** GELU is applied **to gate only**. Negative gate values drop to ≈ 0: the gray cubes are closed gates. The up path (faded) waits as it is.
+</Step>
+<Step>
+**⊙ Gate × value.** The cubes of the two paths flow to the same place and are multiplied elementwise. If the gate is closed the result is ≈ 0, whatever up is. Hover the purple cubes to see the product.
+</Step>
+<Step>
+**Narrow.** The `down_proj` plate maps <S s="T, I" ax="T,I" /> → <S s="T, D" ax="T,D" />. This output is the update the layer adds to the stream.
+</Step>
+</Scrolly>
+
+## Where is it in the code?
+
+<CodeWalk file="gemma.py" symbol="GemmaMLP" notes={[
+  { match: "self.gate_proj = nn.Linear", title: "gate_proj", text: <><code>nn.Linear(2048, 16384, bias=False)</code>. The weight has shape <S s="16384, 2048" ax="I,D" />: a PyTorch Linear stores its weight as <b>[out, in]</b> and computes <code>x @ W.T</code>. The HF key is <code>mlp.gate_proj.weight</code>.</> },
+  { match: "self.up_proj = nn.Linear", title: "up_proj", text: <>The same shape as gate but separate weights. No bias: no Linear in Gemma has a bias (SigLIP's do).</> },
+  { match: "self.down_proj = nn.Linear", title: "down_proj", text: <><code>nn.Linear(16384, 2048)</code>, weight <S s="2048, 16384" ax="D,I" />. It brings the 16384 back to the stream's size.</> },
+  { match: "gate = self.gate_proj(x)", title: "gate", text: <><S s="B, T, 2048" ax="B,T,D" /> → <S s="B, T, 16384" ax="B,T,I" />. A Linear only transforms the <b>last axis</b>. The B and T axes stay as they are, i.e. every token is multiplied on its own.</> },
+  { match: "up = self.up_proj(x)", title: "up", text: <>The same input, the second path. <S s="B, T, 16384" ax="B,T,I" />.</> },
+  { match: "h = F.gelu(gate, approximate=\"tanh\") * up", title: "gate ⊙ value", text: <>GELU is applied <b>to gate only</b>. <code>approximate="tanh"</code> is required: the HF config has <code>hidden_activation="gelu_pytorch_tanh"</code>. <code>*</code> is the elementwise product of two <S s="B, T, 16384" ax="B,T,I" /> tensors.</> },
+  { match: "return self.down_proj(h)", title: "narrow", text: <><S s="B, T, 16384" ax="B,T,I" /> → <S s="B, T, 2048" ax="B,T,D" />. The layer adds this output to the stream (<Link to="/gemma/residual">4.2</Link>).</> },
+]} />
+
+## Look inside the gate
+
+<Fig wide caption={<><b>Layer 0 of the toy model, with the real stream as input.</b> Click a row to pick a token. In the dims where the gate is closed (gray boxes) the result is ≈ 0, whatever up's value. In the toy model about 40% of the intermediate dims are closed for these tokens.</>}>
+<GateMaps />
+</Fig>
+
+<Callout kind="neden" title="Why does the gate work?">
+In a classic MLP each intermediate neuron is <span className="mono">gelu(w·x)</span>: the activation of <i>one</i> linear function of the input. In a GLU each intermediate neuron is <span className="mono">gelu(a·x) · (b·x)</span>: the <b>product</b> of two linear functions. A product can directly represent second-order interactions between input features ("if this is present, let that through"). Shazeer's 2020 paper <i>GLU Variants Improve Transformer</i> showed that GLU variants consistently beat the classic MLP at the same budget. Its honest conclusion is fun too: "We offer no explanation as to why these architectures seem to work; we attribute their success, as all else, to divine benevolence."
+</Callout>
+
+## The activation: GELU (tanh)
+
+<Fig wide caption={<><b>GELU, SiLU and ReLU.</b> Drag the point x along the axis: the values of the three activations at that point and the difference between GELU's tanh approximation and the exact (erf) version update live. Gemma was trained with the tanh approximation.</>}>
+<GeluPlane />
+</Fig>
+
+## Counting parameters
+
+<Fig caption={<><b>Why three matrices?</b> Try the sliders.</>}>
+<MlpParams />
+</Fig>
+
+<Predict q="If the MLP processes each token on its own, is there a difference between feeding a 260-token sequence at once and feeding 260 single tokens?">
+Mathematically <b>no</b>. The max difference measured on the toy model is ~1e-6, just noise from the order of float additions. Attention is the only place that carries information between tokens; the MLP transforms information within a token. In practice feeding them together is much faster, because it becomes one big matmul.
+</Predict>
+
+<Impact from="gemma.py: GemmaMLP" to="Gemma 2: the same class, I = 9216">
+In Gemma 2 2B the MLP is the same (gate/up/down, gelu_tanh). Only the config changes: hidden 2304, intermediate 9216 (= 4d).
+</Impact>
+
+<ManimVideo scene="GeGLUGating" caption="One token's vector splits into two paths; gate ⊙ value; narrowing." />

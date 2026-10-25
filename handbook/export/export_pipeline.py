@@ -162,7 +162,7 @@ def main():
             "patch_value_stats": {"mean": float(patch_only.mean()), "std": float(patch_only.std())},
         })
         doc["images"].append(entry)
-        print(f"{name}: tamam")
+        print(f"{name}: done")
 
     # Cosine similarity of the position embeddings (siglip-base) [196, 196]
     pe = model.embeddings.position_embedding.weight.detach().numpy()

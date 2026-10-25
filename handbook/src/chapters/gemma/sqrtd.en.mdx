@@ -1,0 +1,114 @@
+import { Callout, Fig, Predict, S, Impact } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { BreakIt } from "../../components/misc";
+import { StreamCompare } from "./w/Stream";
+import { EmbedNorms, ScaleBalance, RoundTrip, Bits, NormalizerVariants } from "./w/SqrtD";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { Link } from "react-router-dom";
+
+# The √d scale
+
+<p className="lead">The <b>text</b> embeddings entering Gemma are multiplied by √d. The image features skip this multiplication: they go into the sequence exactly as they leave the projector. This page answers three questions: why multiply, why are the image tokens not multiplied, and how does bf16 affect the math.</p>
+
+## Where is it in the code?
+
+<CodeWalk file="gemma.py" symbol="GemmaModel.forward" notes={[
+  { match: "hidden_states = inputs_embeds", title: "Input", text: <>The incoming tensor is <S s="B, T, D" />. Text tokens come from the embedding table, image tokens from the projector, and they were merged in <code>paligemma.py</code>. In PaliGemma the text rows of this tensor arrive <b>already ×√d</b>.</> },
+  { match: "scale_embeddings: bool = True", title: "Is scaling on?", text: <>The default is <code>True</code>: when Gemma is used on its own (<code>check_gemma.py</code>) the whole input is multiplied by √d. PaliGemma passes <code>False</code>, because it already applied the scale itself, to the text only. Otherwise the image tokens would be multiplied too.</> },
+  { match: "normalizer = torch.tensor", title: "√d, in the input's dtype", text: <>√2048 = 45.2548… The tensor is built with <code>hidden_states.dtype</code>. When the model runs in bf16 this number rounds to <b>45.25</b>. On purpose: HF does the same. See the "bf16" section below.</> },
+  { match: "hidden_states = hidden_states * normalizer", title: "Scaling", text: <>Every element is multiplied by 45.25. The shape stays <S s="B, T, D" />. After this line the stream enters the highway (<Link to="/gemma/residual">4.2</Link>).</> },
+  { match: "for decoder_layer in self.layers", title: "Layers", text: <>The scaled stream goes through the 18 layers.</> },
+]} />
+
+<CodeWalk file="paligemma.py" symbol="PaliGemmaForConditionalGeneration._merge_input_ids_with_image_features" notes={[
+  { match: "normalizer = torch.tensor", title: "√d, in the text's dtype", text: <>The same √2048, this time with <code>inputs_embeds.dtype</code>: 45.25 in a bf16 model. The same operation as HF's scaled embedding table.</> },
+  { match: "scaled_text_embeds = inputs_embeds * normalizer", title: "Text only ×√d", text: <>The <S s="B, T, 2048" ax="B,T,D" /> embeddings from the table are multiplied. The rows at the <code>&lt;image&gt;</code> positions are multiplied too, but they are overwritten shortly.</> },
+  { match: "final_embedding = torch.where(text_mask_expanded, scaled_text_embeds", title: "Scaled text goes in", text: <>The <b>scaled</b> embeddings are copied into the text positions.</> },
+  { match: "masked_scatter(image_mask_expanded", title: "Image features go in unscaled", text: <>The projector output <S s="B, 256, 2048" ax="B,T,D" /> is written into the <code>&lt;image&gt;</code> positions in order, without any operation. The animation is in <Link to="/bridge#merge">part 3</Link>.</> },
+]} />
+
+## √d in four steps
+
+Let's start with measurements. The figure changes as you scroll, and you can play with it at every step.
+
+<Scrolly label="The √d scale" figure={(s) => s === 0 ? <EmbedNorms compact /> : s === 1 ? <ScaleBalance /> : s === 2 ? <RoundTrip /> : <Bits />}>
+<Step>
+**Are the real embeddings small?** Rows read from the real checkpoint have a per-element std of ≈ 0.19 and a row norm of ≈ 8. Tick the box to apply **×√2048**: the row norm rises to ≈ 360 and the per-element std to ≈ 8.4. The purple bars are the `<loc>`/`<seg>` tokens: their norms are ≈ 1.
+</Step>
+<Step>
+**Balance of scales.** The embedding enters the stream first, then every layer adds an update. Change the embedding's scale with the slider. If s is small, the embedding drowns in the first layers (cos ↓). If s is large, the layers cannot change the stream. The dashed lines were really measured with the project's code.
+</Step>
+<Step>
+**The old path: an image token's round trip.** The first version of the code divided the image feature by √d and then Gemma multiplied it by √d: a net ×1 mathematically. Try it with the value slider: in float32 the difference is ~1e-7. In bf16, though, some values come back exactly and others are off by ~0.5%. That is why the path was shortened (the finding below).
+</Step>
+<Step>
+**Why 45.25?** bf16 is the top 16 bits of float32: the exponent (range) is the same, the mantissa (precision) drops from 23 bits to 7. √2048 = 45.2548… rounds to the nearest bf16 value, **45.25**. The code's `normalizer` is built with `hidden_states.dtype`, so with the model in bf16 it multiplies by 45.25, just like HF.
+</Step>
+</Scrolly>
+
+<Callout kind="bulgu" title="The common explanation does not hold here">
+Some explanations say "embeddings are initialized small, so we multiply by √d to bring each element to ~1". That is not the case in the trained PaliGemma: after scaling the per-element std is ≈ <b>8.4</b>, far above 1. The multiplication is not a normalization. The real reason is <b>balance of scales</b>, and that ties back to weight tying.
+</Callout>
+
+<Callout kind="bulgu" title="Why are the <loc> and <seg> tokens so small?">
+The ids from 256000 up (1024 <code>&lt;locXXXX&gt;</code> + 128 <code>&lt;segXXX&gt;</code>) were not in Gemma's original vocabulary; they were added for PaliGemma. Norms of ≈ 1 suggest these rows came with a different initialization and a shorter training. The paper does not say why. It would be interesting to look at these tokens' logits when the model produces box outputs.
+</Callout>
+
+## Why multiply? Balance of scales
+
+Two kinds of things enter the stream: the embedding at the start, then each layer's updates (<Link to="/gemma/residual">4.2</Link>). Thanks to RMSNorm the branches never see the stream's size; they always work on a normalized copy. **Addition, however, is scale-sensitive.** If the stream has a size of 3 and every layer adds an update of size 5, the information carried by the embedding drowns in the first layer.
+
+<BreakIt title="remove the normalizer line"
+  good={`normalizer = torch.tensor(self.config.hidden_size ** 0.5, dtype=hidden_states.dtype)
+hidden_states = hidden_states * normalizer          # ← ×√d`}
+  bad={`# no normalizer
+hidden_states = hidden_states                       # ← ×1`}
+  result={(b) => <StreamCompare show={b ? ["normal", "no_sqrt_d"] : ["normal"]} />} />
+
+<Callout kind="neden" title="The connection: weight tying">
+The root of this multiplication is <i>Attention Is All You Need</i> (2017, §3.4): "in the embedding layers, we multiply those weights by √d_model". That model also shared the embedding table with the output layer. So does Gemma (<Link to="/gemma/tying">4.8</Link>): the <b>same table</b> is used to pick rows at the input and to compute logits at the output (<span className="mono">logit = norm(h) · e</span>).
+<br /><br />
+The two roles want different sizes. At the output the table must stay small, or the logits explode: the norm of norm(h) is ≈ √2048·(1+w) ≈ 45+, and with row norms of ≈ 8 the logits are already tens of units. At the input it must be large enough to compete with the layer updates in the stream. ×√d separates these two needs: the table stays at "output scale" and is enlarged 45× at the input.
+</Callout>
+
+## Image tokens: why are they not multiplied?
+
+The output of SigLIP + projector was trained at the scale the stream expects: in PaliGemma the vision and language sides were tuned together, and the projector output is used inside Gemma as is. In Google's original (big_vision) implementation the √d multiplication applies only to the **text** embeddings; the image tokens enter the stream as they are. In `transformers` 5.x the scale also lives inside `GemmaTextScaledWordEmbedding`, i.e. it applies only to text from the table.
+
+The project's code does the same:
+
+1. `_merge_input_ids_with_image_features` multiplies the **text** embeddings by √d (`scaled_text_embeds`) and places the image features as they are with `masked_scatter`.
+2. `PaliGemma.forward` calls the language model with `scale_embeddings=False`, so `GemmaModel` does not multiply the sequence a second time.
+3. When Gemma is used on its own (`scale_embeddings=True`, the default) the whole input is multiplied. `check_gemma.py` tests this path.
+
+<Impact from="old: paligemma.py ÷√d (image) + gemma.py ×√d (everything)" to="now: paligemma.py ×√d for text only, image unscaled (like HF 5.x)">
+Mathematically they are the same. But in bf16 the old path added two extra roundings to the image tokens (the finding below). The current path does the same operations as HF in the same order.
+</Impact>
+
+<Callout kind="bulgu" title="From the real weights: why the old path was dropped">
+In the first version the image features were divided by √d and then multiplied by Gemma's √d. Mathematically ×1, but in bf16 both steps round, and √2048 = 45.2548… is 45.25 in bf16. Logit comparison against HF with the real <code>google/paligemma-3b-pt-224</code> weights, in bf16:
+<ul>
+<li>mean |diff| <b>0.195</b>, max 3.9. Argmax agreed at 91.5% of the 260 positions. <b>All</b> 22 disagreeing positions were image positions, where HF's top two candidates were only 0.13 apart on average: nearly a tie. Greedy generation still matched HF token for token.</li>
+<li>Relative error layer by layer: all 27 SigLIP layers, the SigLIP output and the projector were <b>exactly 0</b>. It jumped to <b>2e-3</b> at Gemma layer 0, then grew smoothly: 5e-3 at layer 9, 3.6e-2 at layer 17.</li>
+<li>The same weights in float32 on the CPU: SigLIP difference 0, Gemma layers ~1e-7. So the code was right; the difference was only the bf16 rounding of the round trip. The jump appeared exactly at the entrance to Gemma, where the image features are merged.</li>
+</ul>
+After switching the merge to the HF way (text ×√d, image unscaled), the logit difference on a small model (hidden_size 48, bf16) went from 0.125 to <b>exactly 0</b> (<code>check_paligemma.py</code>, <code>check_bf16_exact</code>). Then we measured the real model again with the same input (c00.jpg, <code>caption en</code>, T = 260) on a Colab GPU in bf16:
+<ul>
+<li>logit difference <b>0.000</b> (mean 0.00000, logit scale ≈ 5.5), <code>allclose(atol=1e-2)</code> <b>True</b>. Before: max 3.875, mean 0.195.</li>
+<li>argmax agrees at <b>100%</b> of positions (before 91.5%), and the top-5 at the last position agrees (before, one candidate differed).</li>
+<li>Greedy generation <code>'a sign near the entrance'</code>, token for token the same as HF (6 tokens, stops at eos).</li>
+</ul>
+So with the real model the logits are <b>bit-identical</b> to HF as well. The diagnosis held: the whole difference was the bf16 rounding of ÷√d and ×√d.
+</Callout>
+
+## bf16: why 45.25?
+
+What happens if you build `normalizer` differently? All of them multiply a bf16 tensor and the result is bf16 again, but the intermediate math differs:
+
+<Fig caption={<><b>The same bf16 input, three different normalizers.</b> Multiplying by a Python float or a float32 tensor makes PyTorch do the multiplication at higher precision (with 45.2548) and round afterwards. The project's code and HF multiply by 45.25. About 2.6% of the elements come out 1 ulp different. An <code>exact=True</code> comparison like the one in <code>check_gemma.py</code> catches that.</>}>
+<NormalizerVariants />
+</Fig>
+
+<Predict q="When the model runs in float32, the normalizer's dtype is float32. What value is √2048 multiplied by then?">
+<b>45.254833…</b> (with float32's 24 bits of precision). Rounding to 45.25 only happens in a bf16 (or float16) model. One line of code, but the number depends on the dtype. That is why building the normalizer with <code>hidden_states.dtype</code> is a requirement for matching HF bit for bit.
+</Predict>

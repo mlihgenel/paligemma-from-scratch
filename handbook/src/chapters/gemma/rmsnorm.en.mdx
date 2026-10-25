@@ -1,0 +1,149 @@
+import { Callout, Fig, Predict, S, Impact, Note } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { BreakIt, ManimVideo } from "../../components/misc";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { RealNormWeights, OrderStats, ZeroInitStats } from "./w/Rms";
+import { RmsSequence, RmsPlayground, NormGeometry, Keepdim3DScene } from "./w/Rms2";
+import { Link } from "react-router-dom";
+
+# RMSNorm
+
+<p className="lead">A four-line class, but it holds four separate decisions: not subtracting the mean, scaling by <code>(1 + w)</code>, computing in float32, and multiplying before the dtype conversion. Let's first follow it step by step on a real token sequence.</p>
+
+$$
+\mathrm{RMSNorm}(x) = \frac{x}{\sqrt{\frac{1}{d}\sum_{i=1}^{d} x_i^2 + \varepsilon}} \odot (1 + w)
+$$
+
+<Note label="Source">Zhang and Sennrich, <i>Root Mean Square Layer Normalization</i>, NeurIPS 2019. Llama, Gemma, Mistral and T5 all use it.</Note>
+
+The denominator is the vector's **RMS** (root mean square): the square root of the mean of its squares. Each token is normalized by its own vector, independently of the others.
+
+## Step by step: four real tokens
+
+The numbers below are not made up. The rows of the `<bos>`, `caption`, `␣tr` and `\n` tokens were taken from PaliGemma's embedding table, multiplied by √2048 (Gemma's input scale for the stream), and the first 8 dims are shown. `w` is the `input_layernorm` weight of the real model's first layer. Scroll down.
+
+<Scrolly label="RMSNorm, with real values" figure={(s) => <RmsSequence step={s} />}>
+<Step>
+**Input.** Each row is a token, each column an element of the hidden dimension: <S s="T, D" />. The color shows the sign and size of the value. Look at the rms values on the right: the rows differ in size by 2–3×.
+</Step>
+<Step>
+**`x.pow(2)`**: elementwise square. Same shape. The signs disappear, and large values dominate even more. This step runs in float32: summing 2048 squares with bf16's 7-bit mantissa loses a lot of precision.
+</Step>
+<Step>
+**`.mean(-1, keepdim=True)`**: the 8 squares of each row collapse into a single number. Watch the cells flow into the column on the right. The result is <S s="T, 1" />: `keepdim=True` keeps the last axis with size **1** instead of deleting it. That small detail pays off in the next step.
+</Step>
+<Step>
+**`torch.rsqrt(… + eps)`**: 1/√(mean + 1e-6). Large rows get a small rsqrt, small rows a large one: each token gets a factor that matches its own size.
+</Step>
+<Step>
+**Broadcast.** <S s="T, 1" /> is multiplied with <S s="T, D" />. PyTorch **broadcasts** the size-1 axis along D: each row's rsqrt behaves as if copied into that row's 8 cells. No copy is made in memory; it is just a view.
+</Step>
+<Step>
+**`x * rsqrt`**: now every row has an RMS of exactly **1.00**. Look at the values on the right. The size difference between rows is gone completely; the directions (signs and ratios) are kept.
+</Step>
+<Step>
+**`× (1 + w)`**: finally each dim is multiplied by its own learned coefficient. The pink row is the real weights. This time the thing being broadcast is <S s="D" />: the same coefficients apply to every token. In Gemma this multiplication still happens in float32; the dtype conversion comes last.
+</Step>
+</Scrolly>
+
+## Try it yourself
+
+<Fig wide caption={<><b>The RMSNorm lab.</b> Drag the x cells on the left and the pink (1 + w) cells at the top up and down to change them. The output on the right is computed live (<code>lib/tensor.ts</code>, verified bit for bit against PyTorch). Hover any cell to see its computation.</>}>
+<RmsPlayground />
+</Fig>
+
+<Predict q="What happens to the output if you multiply x by 10? What if all the elements of a row are equal (e.g. all 5)?">
+The output does **not change at all**: <span className="mono">(10x) / rms(10x) = x / rms(x)</span>. You can see it in the lab with "x × 10": only the rsqrt column shrinks 10×. If all elements are 5, then rms = 5 and the output is 1·(1+w) in every dim. With LayerNorm the same row would become <b>zero</b> after subtracting the mean.
+</Predict>
+
+## Where is it in the code?
+
+<CodeWalk file="gemma.py" symbol="GemmaRMSNorm" notes={[
+  { match: "self.eps = eps", title: "eps = 1e-6", text: <>Prevents division by zero. It is <code>rms_norm_eps</code> from the config. PyTorch's LayerNorm default is 1e-5, and that difference breaks <code>allclose</code>.</> },
+  { match: "self.weight = nn.Parameter(torch.zeros(dim))", title: "Starts at zero", text: <>The scale is <code>1 + weight</code>, so it is exactly 1 at init. Llama initializes with <code>torch.ones</code> and uses <code>x * weight</code>. Mathematically the same, but the numbers in the checkpoint are shifted by 1. Loading Gemma weights with Llama code breaks everything.</> },
+  { match: "return x * torch.rsqrt", title: "_norm", text: <>Steps 2–6 of the scrolly in a single line: square, mean (keepdim), rsqrt, broadcast multiply.</> },
+  { match: "output = self._norm(x.float())", title: "Upcast to float32", text: <>Even when the model runs in bf16, the square and mean are computed in float32.</> },
+  { match: "output = output * (1.0 + self.weight.float())", title: "(1+w), still float32", text: <>This line coming <b>before</b> <code>type_as</code> is what separates Gemma from Llama. See the "order of operations" section below.</> },
+  { match: "return output.type_as(x)", title: "Back to the input dtype", text: <>A single rounding, at the very end. The output is <S s="B, T, D" />.</> },
+]} />
+
+## Geometry: a sphere
+
+If d were 3 we could see what RMSNorm does. Every point keeps its direction and loses its magnitude: they all move onto a sphere of radius √d.
+
+<Fig wide caption={<><b>RMSNorm, (1+w) and LayerNorm in three dimensions.</b> The gray points are random vectors, the colored points their images. Switch tabs and watch where the points move. In reality d = 2048: the sphere has 2048 dimensions and radius √2048 ≈ 45.25.</>}>
+<NormGeometry />
+</Fig>
+
+<Callout kind="neden" title="Why is not subtracting the mean fine?">
+LayerNorm does two things: centering (zeroing the mean) and scaling. Zhang and Sennrich showed that most of what keeps training stable is the scaling. Without centering the quality is almost the same and the computation is cheaper: one less mean and subtraction, and no bias. LayerNorm also erases "the shared shift of all dims", while RMSNorm keeps it. You can see it above by switching to LayerNorm: the points lose the (1, 1, 1) direction and are squeezed onto a circle.
+</Callout>
+
+## With three axes: keepdim and broadcast
+
+The real tensor also has a batch axis: <S s="B, T, D" />. `mean(-1)` always reduces the last axis, D.
+
+<Scrolly label="mean and broadcast over [B, T, D]" figure={(s) => <Keepdim3DScene step={s} />}>
+<Step>
+**<S s="B, T, D" />**: 2 examples × 3 tokens × 6 dims. Each cube is a number; hover it to see the value. You can rotate the scene; the button at the top right resets the view.
+</Step>
+<Step>
+**`mean(-1, keepdim=True)`**: the 6 cubes of each (b, t) row flow into a single cube on the right. The result is <S s="B, T, 1" />. The D axis was not deleted; its size dropped to 1.
+</Step>
+<Step>
+**Broadcast**: that single cube spreads along D and lines up in front of every element. That is what makes the <S s="B, T, 1" /> × <S s="B, T, D" /> product possible.
+</Step>
+</Scrolly>
+
+<Note label="Rule">PyTorch matches axes from the <b>right</b>. An axis of size 1 is broadcast to the size of the other side.</Note>
+
+<Predict q="Without keepdim=True, what would the shape of mean(-1) be, and would x * rsqrt(...) still work?">
+The shape would be <S s="B, T" />. Matching from the right pairs T with D. If T ≠ D you get an error. If T == D (e.g. both 64) it runs <b>silently wrong</b>: every token is divided by another token's RMS. A comparison against HF catches errors like this.
+</Predict>
+
+## Real weights: which dims does the model amplify?
+
+<Fig wide caption={<><b>The 37 RMSNorms of the real PaliGemma.</b> In the heatmap each row is a layer, each column a dim, the color 1+w. Click a row. The scales are not around 1: the mean is ~2. In some dims 1+w is negative, i.e. the norm <b>flips the sign</b> of that dim.</>}>
+<RealNormWeights />
+</Fig>
+
+<Note label="From the real weights">In some dims 1+w ≈ 10–14. That fits the known phenomenon of "massive activations" in transformers.</Note>
+
+The weights that started at zero grew a lot during training: on average ≈ 1.1 in `input_layernorm` and ≈ 1.6 in `post_attention_layernorm`, i.e. a typical scale of 2–2.6.
+
+## The zero-init trap
+
+With zero weights, `(1 + w)` = 1. Buggy code that never uses the weight then gives the same result.
+
+<BreakIt title="forget the (1 + w) multiplication"
+  good={`output = self._norm(x.float())
+output = output * (1.0 + self.weight.float())   # ← the scale
+return output.type_as(x)`}
+  bad={`output = self._norm(x.float())
+# scale forgotten                                 # ← w is never used
+return output.type_as(x)`}
+  result={(b) => <ZeroInitStats broken={b} />} />
+
+That is why `check_gemma.py` fills the weight with random values using `hf.weight.normal_()` before comparing. The rule: **a test only proves a parameter is used if that parameter is not at a no-op value.**
+
+## Order of operations: Gemma vs Llama
+
+Both compute the same formula; the only difference is when they go back to bf16:
+
+| | Gemma (this project) | Llama |
+|---|---|---|
+| 1 | `x.float()` → normalize | `x.float()` → normalize |
+| 2 | `× (1 + w)` **in float32** | **back to bf16** |
+| 3 | back to bf16 | `× w` **in bf16** |
+
+Gemma rounds once, Llama twice. In the lab above pick **bfloat16** and **Llama order**: the ringed cells are where the two orders give different results. The difference measured on the toy model: <OrderStats />.
+
+<Callout kind="dikkat">
+This difference disappears completely in float32, only shows up in bf16, and accumulates over 18 layers × 2 norms. The bf16 test in <code>check_gemma.py</code> uses <code>exact=True</code> (bit-for-bit equality), because a 1-ulp difference would pass <code>allclose</code>'s tolerance.
+</Callout>
+
+<Impact from="gemma.py: GemmaRMSNorm" to="Gemma 2: 4 norms per layer">
+Gemma 2 uses the same class 4 times per layer (sandwich norm). <code>(1 + w)</code> and the float32 order stay exactly the same.
+</Impact>
+
+<ManimVideo scene="RMSNormGeometry" caption="points onto a circle, then an ellipse (40 s)" />

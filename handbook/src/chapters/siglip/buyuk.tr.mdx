@@ -19,7 +19,7 @@ SigLIP, milyarlarca (görüntü, metin) çiftiyle eğitildi. Bir batch'te N gör
 <ContrastMatrix />
 </Fig>
 
-<Note label="Kaynak">Zhai ve ark., <i>Sigmoid Loss for Language Image Pre-Training</i>, ICCV 2023 (<code>papers/siglip.pdf</code>).</Note>
+<Note label="Kaynak">Zhai ve ark., <i>Sigmoid Loss for Language Image Pre-Training</i>, ICCV 2023 (<a href="https://arxiv.org/abs/2303.15343">arXiv:2303.15343</a>).</Note>
 
 Softmax'ın paydası bütün batch'e bağlı olduğu için cihazlar arasında N × N matrisin tamamı toplanmalı. Ayrıca sayısal kararlılık için max-çıkarma ve log-sum-exp gerekiyor. Sigmoid'de her hücre bağımsız: batch büyüdükçe bellek ve iletişim maliyeti çok daha iyi ölçekleniyor.
 
@@ -31,7 +31,7 @@ PaliGemma eğitiminde SigLIP kaybı yok. Görüntü kodlayıcı, Gemma'nın ceva
 
 Görsel token sayısı (görüntü kenarı / 14)². Attention her token'ı her token'la karşılaştırdığı için maliyeti T² ile büyüyor.
 
-<Fig wide caption={<><b>224, 448, 896.</b> Deneyinde gördüğün fark buradan: 448 px küçük yazıyı okuyor ama soru başına ~3.4 kat süre alıyordu.</>}>
+<Fig wide caption={<><b>224, 448, 896.</b> <a href="https://github.com/mlihgenel/paper-to-practice/tree/main/papers/01-paligemma2/experiment">Türkçe tabela deneyindeki</a> fark buradan: 448 px küçük yazıyı okuyor ama soru başına ~3.4 kat süre alıyordu.</>}>
 <ResolutionCost />
 </Fig>
 

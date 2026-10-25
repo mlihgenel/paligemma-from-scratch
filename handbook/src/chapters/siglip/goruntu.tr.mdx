@@ -7,7 +7,7 @@ import { Link } from "react-router-dom";
 
 # Görüntüden yamaya
 
-<p className="lead">Bir fotoğrafın 256 token'a dönüşmesi üç adım: ön işleme (piksel → [−1, 1] aralığında bir tensör), yama çıkarma (Conv2d) ve konum ekleme. Hepsi senin <code>processing.py</code> ve <code>SiglipVisionEmbeddings</code> sınıfında.</p>
+<p className="lead">Bir fotoğrafın 256 token'a dönüşmesi üç adım: ön işleme (piksel → [−1, 1] aralığında bir tensör), yama çıkarma (Conv2d) ve konum ekleme. Hepsi projedeki <code>processing.py</code> ve <code>SiglipVisionEmbeddings</code> sınıfında.</p>
 
 ## Ön işleme
 
@@ -26,6 +26,8 @@ import { Link } from "react-router-dom";
   { match: "images = [normalize(image", title: "(x − 0.5) / 0.5", text: <>mean ve std listeleri <S s="3" ax="C" /> boyutunda, son eksende yayılıyor (broadcast).</> },
   { match: "images = [image.transpose(2, 0, 1)", title: "HWC → CHW", text: <>PyTorch'un Conv2d düzeni.</> },
 ]} />
+
+<a id="conv" />
 
 ## Yama çıkarma: Conv2d
 

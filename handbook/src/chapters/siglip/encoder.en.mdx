@@ -1,0 +1,80 @@
+import { Callout, ConceptQ, Fig, S, Note, Predict } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { ManimVideo, BreakIt } from "../../components/misc";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { AttentionScene, AttnMapExplorer, PcaCompare, SiglipParams } from "./Attn";
+import { SiglipGrowth } from "../gemma/w/Layer";
+import { Link } from "react-router-dom";
+
+# The SigLIP encoder
+
+<p className="lead">27 identical layers, each with two blocks: first the patches look at each other (attention), then each patch is transformed on its own (MLP). The shape is <S s="1, 256, 1152" ax="B,T,D" /> from start to end. What changes is what each token knows.</p>
+
+## Attention, tensor by tensor
+
+Following the tensor shapes is enough to understand multi-head attention. Below is a small example with 4 tokens, 6 dims and 2 heads. Every cube is a real number (random weights, computed in JS). The real model has 256 tokens, 1152 dims and 16 heads.
+
+<Scrolly label="SiglipAttention.forward" figure={(s) => <AttentionScene step={s} />}>
+<Step>**Input** <S s="T, D" ax="T,D" /> (batch omitted). Patch vectors after the LayerNorm.</Step>
+<Step>**`q_proj`, `k_proj`, `v_proj`**: three separate Linears (with bias), each <S s="T, D" ax="T,D" /> → <S s="T, D" ax="T,D" />. q is "what am I looking for", k "what do I have", v "what I give if I am found".</Step>
+<Step>**`view(B, T, H, hd).transpose(1, 2)`**: D is split as H × hd and the head axis moves forward: <S s="H, T, hd" ax="H,T,hd" />. No number changed in memory. Each head now has its own small T × hd matrix.</Step>
+<Step>**`q @ k.transpose(-2, -1) * scale`**: a <S s="T, T" ax="T,T" /> score matrix per head. Cell (i, j): how well token i "matches" token j. Dividing by √hd keeps the size of the scores independent of the dimension.</Step>
+<Step>**`softmax(dim=-1)`**: every row becomes a probability distribution that sums to 1. No mask: every patch can see every patch (unlike Gemma's causal mask).</Step>
+<Step>**`wei @ v_states`**: each token takes a weighted average of the v's: <S s="H, T, hd" ax="H,T,hd" />. This is where information moves between tokens.</Step>
+<Step>**`transpose(1, 2).contiguous().reshape(B, T, C)`**: the heads side by side again: <S s="T, D" ax="T,D" />. `contiguous()` is needed because after the transpose the memory layout is no longer in order, and `view` does not accept that.</Step>
+<Step>**`out_proj`**: the final Linear that mixes what the heads found. The output has the same shape as the input: ready to be added to the residual.</Step>
+</Scrolly>
+
+<ManimVideo scene="MultiHeadReshape" caption="splitting into heads with view and transpose (20 s)" />
+
+<CodeWalk file="siglip.py" symbol="SiglipAttention" notes={[
+  { match: "self.head_dim = config.hidden_size // config.num_attention_heads", title: "head_dim", text: <>1152 / 16 = 72. SigLIP computes it. Gemma reads it from the config (256) instead, because in Gemma 2 it does not equal hidden/heads.</> },
+  { match: "self.scale = self.head_dim ** -0.5", title: "scale", text: <>1/√72. A score is the product of two hd-dim vectors. Its variance grows with hd, and this scale brings it back to 1. Without it softmax becomes very peaked and the gradient dies.</> },
+  { match: "k_states = k_states.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)", title: "split into heads", text: <><S s="B, T, D" /> → <S s="B, T, H, hd" ax="B,T,H,hd" /> → <S s="B, H, T, hd" ax="B,H,T,hd" />.</> },
+  { match: "wei = (q_states @ k_states.transpose(-2, -1)) * self.scale", title: "scores", text: <>A matmul over the last two axes; the first two (B, H) act like a batch: <S s="B, H, T, T" ax="B,H,T,T" />. 256² × 16 = 1 M numbers per layer.</> },
+  { match: "wei = F.softmax(wei, dim=-1)", title: "softmax", text: <>Along the last axis: each query row separately.</> },
+  { match: "out = wei @ v_states", title: "weighted average", text: <><S s="B, H, T, hd" ax="B,H,T,hd" />.</> },
+  { match: "out = out.transpose(1, 2).contiguous()", title: "merge back", text: <><code>reshape</code> already copies when needed; <code>contiguous()</code> just makes the intent explicit.</> },
+]} />
+
+## Real attention maps
+
+<Fig wide caption={<><b>Where does a patch look?</b> Hover a patch in the image (the query). The orange layer is that patch's attention distribution. Go deeper with the layer slider, and pick heads to compare them one by one.</>}>
+<AttnMapExplorer />
+</Fig>
+
+## What do the layers add?
+
+<Fig wide caption={<><b>The first three principal components of the patch vectors, as RGB.</b> Right after the embedding the colors follow each pixel's own color. In the last layer, parts of the same object (the sign's text, its background) get similar colors: the representation now carries "what it belongs to".</>}>
+<PcaCompare />
+</Fig>
+
+## The encoder layer and the growing stream
+
+<CodeWalk file="siglip.py" symbol="SiglipEncoderLayer" notes={[
+  { match: "self.layer_norm1 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)", title: "LayerNorm, eps = 1e-6", text: <>SigLIP uses LayerNorm (mean + variance + γ, β). Gemma uses RMSNorm (<Link to="/gemma/rmsnorm">4.4</Link>). eps is 1e-6, not PyTorch's default of 1e-5.</> },
+  { match: "residual = hidden_states", title: "pre-norm", text: <>The same pattern as in Gemma: the residual is saved <b>before</b> the norm (<Link to="/gemma/residual">4.2</Link>).</> },
+  { match: "hidden_states = self.mlp(hidden_states)", title: "MLP", text: <>fc1 (1152 → 4304) → gelu_tanh → fc2. An ungated, classic MLP. Compared with GeGLU in <Link to="/gemma/geglu">4.5</Link>.</> },
+]} />
+
+<Fig caption={<><b>A sign passing through the project's SigLIP (siglip-base).</b> The stream grows over the layers. <code>post_layernorm</code> normalizes it once at the very end.</>}>
+<SiglipGrowth />
+</Fig>
+
+## Where are the parameters?
+
+<Fig caption={<><b>So400m.</b> The values come from the project's classes built with the real config.</>}>
+<SiglipParams />
+</Fig>
+
+## Concept questions
+
+<ConceptQ n={1} q="What is the difference between pre-norm (LN before the residual) and post-norm? Which one does SigLIP use? Why is there an extra post_layernorm at the end?">
+Post-norm: <span className="mono">x = LN(x + f(x))</span>. Pre-norm: <span className="mono">x = x + f(LN(x))</span>. SigLIP (and Gemma) use pre-norm: the stream itself is never normalized and the identity path stays unbroken. That protects the gradient in deep models (<Link to="/gemma/residual">4.2</Link>). The price: the last layer outputs an unnormalized, grown stream (the chart above). <code>post_layernorm</code> normalizes it in one go.
+</ConceptQ>
+<ConceptQ n={2} q="Why is there no attention mask here? Why would the causal tril mask of a language model not fit?">
+<code>tril</code> (the causal mask) hides the future in a language model: while producing a token it must not see the ones after it. An image has no "future". All 256 patches exist at once, and a patch's meaning depends on its neighbors in every direction (the top and bottom of a letter). With a causal mask the top-left patch could never see the bottom-right one.
+</ConceptQ>
+<ConceptQ n={3} q="27 layers × 16 heads: how many parameters of so400m are in attention, and how many in the MLP?">
+Attention per layer: 4 × 1152² + 4 × 1152 ≈ 5.31 M. MLP: 2 × 1152 × 4304 + 4304 + 1152 ≈ 9.92 M. Over 27 layers, attention ≈ 143 M and MLP ≈ 268 M. The head count does not change the parameters, it only decides how the same D is split. The bars above are measured from the project's model.
+</ConceptQ>

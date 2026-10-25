@@ -1,9 +1,10 @@
-// 3D v2: yönlendirilmiş kamera (CameraControls), instanced küpler, raycast hover, yumuşak geçişler, eksen okları.
+// 3D: a directed camera (CameraControls), instanced cubes, raycast hover, smooth transitions, axis arrows.
 import { ReactNode, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, ThreeEvent } from "@react-three/fiber";
 import { CameraControls, Html } from "@react-three/drei";
 import { easing } from "maath";
 import * as THREE from "three";
+import { useT } from "../i18n";
 
 export interface View { pos: [number, number, number]; target?: [number, number, number] }
 
@@ -12,7 +13,8 @@ export function Stage3D({ children, view, height = 420, minDist = 2, maxDist = 3
 }) {
   const ref = useRef<CameraControls | null>(null);
   const [moved, setMoved] = useState(false);
-  // CameraControls Canvas içinde geç bağlanıyor: ilk bağlandığında hedefe animasyonsuz kur
+  const t = useT();
+  // CameraControls attaches late inside the Canvas: on first attach, jump to the target without animation
   const bind = (c: CameraControls | null) => {
     if (c && !ref.current) { const t = view.target ?? [0, 0, 0]; c.setLookAt(...view.pos, ...t, false); }
     ref.current = c;
@@ -23,7 +25,7 @@ export function Stage3D({ children, view, height = 420, minDist = 2, maxDist = 3
     setMoved(false);
   };
   useEffect(() => { go(true); }, [JSON.stringify(view)]);
-  // Ekranda olmayan sahne çizilmesin: aynı sayfadaki birkaç Canvas birbirini yavaşlatmasın
+  // Do not render off-screen scenes, so several Canvases on one page do not slow each other down
   const box = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(true);
   useEffect(() => {
@@ -43,8 +45,8 @@ export function Stage3D({ children, view, height = 420, minDist = 2, maxDist = 3
           minPolarAngle={0.15} maxPolarAngle={Math.PI / 2 + 0.15} smoothTime={0.45} draggingSmoothTime={0.12}
           onStart={() => setMoved(true)} />
       </Canvas>
-      {moved && <button className="btn" onClick={() => go(true)} style={{ position: "absolute", top: 8, right: 8, background: "var(--bg-elev)", fontSize: 12.5 }}>↺ görünümü sıfırla</button>}
-      <div style={{ position: "absolute", bottom: 8, right: 12, pointerEvents: "none", fontSize: 11.5, color: "var(--fg-faint)" }}>sürükle: döndür · kaydır: yakınlaş · üstüne gel: değer</div>
+      {moved && <button className="btn" onClick={() => go(true)} style={{ position: "absolute", top: 8, right: 8, background: "var(--bg-elev)", fontSize: 12.5 }}>↺ {t("reset view", "görünümü sıfırla")}</button>}
+      <div style={{ position: "absolute", bottom: 8, right: 12, pointerEvents: "none", fontSize: 11.5, color: "var(--fg-faint)" }}>{t("drag: rotate · scroll: zoom · hover: value", "sürükle: döndür · kaydır: yakınlaş · üstüne gel: değer")}</div>
     </div>
   );
 }
@@ -54,16 +56,16 @@ export interface Cube {
   pos: [number, number, number];
   size?: [number, number, number];
   color: string;
-  dim?: boolean;          // bağlam (soluk)
+  dim?: boolean;          // context (faded)
   hidden?: boolean;
   tip?: () => ReactNode;
 }
 
-/** Süreli geçiş: hedef değişince baştan sona easeInOutCubic. stagger: i. küp i × stagger saniye geç başlar */
+/** Timed transition: easeInOutCubic from start to end when the target changes. stagger: cube i starts i × stagger seconds later */
 export interface Tween { duration?: number; stagger?: number }
 export const easeInOut = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 
-/** Tek InstancedMesh: id sırası sabit kalmalı. Hedefe yumuşak geçiş, hover'da tooltip ve vurgu */
+/** A single InstancedMesh: the id order must stay fixed. Smooth transition to the target, tooltip and highlight on hover */
 export function Cubes({ items, cell = 0.42, tween }: { items: Cube[]; cell?: number; tween?: Tween }) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const n = items.length;
@@ -89,7 +91,7 @@ export function Cubes({ items, cell = 0.42, tween }: { items: Cube[]; cell?: num
       const sz = it.hidden ? [0.0001, 0.0001, 0.0001] : (it.size ?? [cell, cell, cell]);
       tgtS.set(sz[0], sz[1], sz[2]);
       if (tween) {
-        // hedef değiştiyse bulunduğu yerden yeni bir geçiş başlat
+        // if the target changed, start a new transition from the current place
         if (!c.p1.equals(tgtP) || !c.s1.equals(tgtS)) {
           c.p0.copy(c.p); c.s0.copy(c.s); c.p1.copy(tgtP); c.s1.copy(tgtS);
           c.t0 = now + i * (tween.stagger ?? 0);
@@ -111,7 +113,7 @@ export function Cubes({ items, cell = 0.42, tween }: { items: Cube[]; cell?: num
     });
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.computeBoundingSphere();   // hareket eden küpler hover'da bulunabilsin
+    mesh.computeBoundingSphere();   // so moving cubes can still be found on hover
   });
 
   const onMove = (e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); if (e.instanceId !== undefined && !items[e.instanceId]?.hidden) setHover(e.instanceId); };
@@ -132,15 +134,15 @@ export function Cubes({ items, cell = 0.42, tween }: { items: Cube[]; cell?: num
 }
 
 export interface Axis {
-  dir: [number, number, number];   // birim yön
-  len: number;                     // dünya birimi
-  color: string;                   // CSS değişkeni de olabilir: "var(--ax-T)"
+  dir: [number, number, number];   // unit direction
+  len: number;                     // world units
+  color: string;                   // may also be a CSS variable: "var(--ax-T)"
   label: ReactNode;
-  ticks?: number;                  // eksen boyunca hücre sayısı (her hücrenin ortasına bir çentik)
+  ticks?: number;                  // number of cells along the axis (a tick in the middle of each)
   labelOffset?: [number, number, number];
 }
 
-/** Eksen okları: bir köşeden çıkan renkli çizgi + ok başı + uçta etiket. Uzunluk ve köşe değişince yumuşakça kayar. */
+/** Axis arrows: a colored line from a corner + an arrowhead + a label at the tip. Slides smoothly when the length or corner changes. */
 export function Axes3D({ origin, axes }: { origin: [number, number, number]; axes: Axis[] }) {
   return <>{axes.map((a, i) => <AxisArrow key={i} origin={origin} {...a} />)}</>;
 }
@@ -180,7 +182,7 @@ function AxisArrow({ origin, dir, len, color, label, ticks = 0, labelOffset = [0
   );
 }
 
-/** Sahne içi etiket (DOM) */
+/** In-scene label (DOM) */
 export function Tag({ position, children, color, size = 12, weight = 500 }: { position: [number, number, number]; children: ReactNode; color?: string; size?: number; weight?: number }) {
   return (
     <Html position={position} center style={{ pointerEvents: "none", whiteSpace: "nowrap" }} zIndexRange={[10, 0]}>
@@ -189,7 +191,7 @@ export function Tag({ position, children, color, size = 12, weight = 500 }: { po
   );
 }
 
-/** CSS değişkenini oku (three materyalleri için) */
+/** Read a CSS variable (for three materials) */
 export function cssColor(name: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888";
 }

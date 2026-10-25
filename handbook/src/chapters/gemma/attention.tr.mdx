@@ -55,7 +55,7 @@ Sağda kod, altında bu adıma kadar oluşmuş tensörlerin şekilleri. Şekille
 
 İki rastgele <code>head_dim</code> boyutlu vektörün iç çarpımının standart sapması <code>√head_dim</code>. <code>head_dim = 256</code> iken skorlar ±16 civarında yayılıyor. Softmax üstel olduğu için bu yayılımda bir token neredeyse bütün ağırlığı alıyor: attention bir "keskin seçim"e dönüşüyor ve gradyan bu durumda sönüyor. 1/√head_dim, yayılımı head_dim'den bağımsız olarak 1'de tutuyor.
 
-<Fig caption={<><b>Aynı vektörler, ölçekli ve ölçeksiz.</b> 8 anahtar, rastgele bir sorgu. Ölçeksiz modda head_dim büyüdükçe bir çubuk her şeyi alıyor. Altta senin <code>head_dim</code> değerlerinle 4000 örnekten ölçülmüş standart sapmalar.</>}>
+<Fig caption={<><b>Aynı vektörler, ölçekli ve ölçeksiz.</b> 8 anahtar, rastgele bir sorgu. Ölçeksiz modda head_dim büyüdükçe bir çubuk her şeyi alıyor. Altta farklı <code>head_dim</code> değerleriyle 4000 örnekten ölçülmüş standart sapmalar.</>}>
 <ScaleDemo />
 </Fig>
 
@@ -73,9 +73,9 @@ Nedensel dil modelinde bir token yalnızca <b>kendisini ve öncekileri</b> göre
 <MaskGrid />
 </Fig>
 
-Aşağıda senin `GemmaAttention`'ın rastgele (ama belirgin) ağırlıklarla çalışıyor: 8 token, 4 head. Maske açıkken köşegen üstü tamamen 0. Kapatınca ağırlıklar gelecekteki token'lara da yayılıyor.
+Aşağıda projedeki `GemmaAttention` rastgele (ama belirgin) ağırlıklarla çalışıyor: 8 token, 4 head. Maske açıkken köşegen üstü tamamen 0. Kapatınca ağırlıklar gelecekteki token'lara da yayılıyor.
 
-<Fig wide caption={<><b>Senin attention'ından çıkan ağırlıklar.</b> Satırlar 1'e topluyor. Alttaki iki ölçüm: son token'ı değiştirince <b>önceki</b> token'ların çıktıları maskeliyken hiç değişmiyor, maskesizken değişiyor. <code>check_gemma.py</code>'deki "gelecek geçmişi etkilemiyor" testi bu.</>}>
+<Fig wide caption={<><b>Projenin attention'ından çıkan ağırlıklar.</b> Satırlar 1'e topluyor. Alttaki iki ölçüm: son token'ı değiştirince <b>önceki</b> token'ların çıktıları maskeliyken hiç değişmiyor, maskesizken değişiyor. <code>check_gemma.py</code>'deki "gelecek geçmişi etkilemiyor" testi bu.</>}>
 <MaskWeights />
 </Fig>
 
@@ -84,17 +84,17 @@ Aşağıda senin `GemmaAttention`'ın rastgele (ama belirgin) ağırlıklarla ç
 Attention tek başına bir şey yapmıyor: `GemmaDecoderLayer` onu çağırıyor, `GemmaModel` da katmana gereken üç şeyi veriyor.
 
 <CodeWalk file="gemma.py" symbol="GemmaModel.forward" notes={[
-  { match: "position_ids: torch.Tensor | None = None", title: "position_ids", text: <><S s="B, T" ax="B,T" />. Her token'ın <b>dizideki</b> konumu. Verilmezse 0 … T−1. KV cache ile üretirken yeni token 260. konumda olacağı için dışarıdan geliyor.</> },
+  { match: "position_ids: torch.Tensor | None = None", title: "position_ids", text: <><S s="B, T" ax="B,T" />. Her token'ın <b>dizideki</b> konumu. PaliGemma kendisi veriyor (1'den başlayarak). KV cache ile üretimde yeni token geçmişin kaldığı konumda.</> },
   { match: "position_ids = torch.arange(past_len, past_len + T", title: "varsayılan konumlar", text: <><code>arange(T)</code>, her örnek için aynı. KV cache varsa geçmişin kaldığı yerden devam ediyor (<code>past_len</code>).</> },
-  { match: "attention_mask = make_causal_mask(", title: "varsayılan maske", text: <>Saf Gemma için nedensel. PaliGemma kendi maskesini verecek: görüntü ve komut kısmı çift yönlü (<Link to="/kopru">3</Link>).</> },
+  { match: "attention_mask = make_causal_mask(", title: "varsayılan maske", text: <>Saf Gemma için nedensel. PaliGemma kendi maskesini verecek: görüntü ve komut kısmı çift yönlü (<Link to="/bridge">3</Link>).</> },
   { match: "position_embeddings = self.rotary_emb(hidden_states, position_ids)", title: "cos/sin bir kez", text: <>Tablo bütün katmanlarda aynı. 18 kez hesaplamak yerine bir kez hesaplanıp her katmana geçiriliyor.</> },
   { match: "hidden_states = decoder_layer(hidden_states, position_embeddings, attention_mask", title: "döngü", text: <>Artık her katmana üç şey gidiyor. <code>nn.Sequential</code> bunu yapamazdı (<Link to="/gemma/model">4.7</Link>).</> },
 ]} />
 
 ## Bilinçli olarak eksik olanlar
 
-<Callout kind="not" title="Henüz olmayanlar">
-<b>KV cache</b> burada anlatılmıyor: kodda var (<code>kv_cache</code> parametresi, <code>layer_idx</code> cache'teki satırı seçiyor), ama bu sayfadaki şekiller cache'siz, bütün dizinin tek seferde işlendiği hali gösteriyor. <b>Prefix-LM maskesi</b> yok: şu an her şey nedensel, yani görüntü token'ları bile sadece kendinden öncekileri görüyor. <b>Padding</b> da yok. <code>attention_dropout</code> kullanılmıyor, çünkü çıkarımda zaten 0.
+<Callout kind="not" title="Bu sayfada olmayanlar">
+<b>KV cache</b>: kodda var (<code>kv_cache</code> parametresi, <code>layer_idx</code> cache'teki satırı seçiyor), ama bu sayfadaki şekiller bütün dizinin tek seferde işlendiği hali gösteriyor. Cache bir sonraki sayfada (<Link to="/gemma/kv-cache">4.12</Link>). <b>Prefix-LM maskesi</b>: bu sayfadaki örnekler düz nedensel maske kullanıyor. PaliGemma'nın maskesi <Link to="/bridge">3</Link>'te. <b>Padding</b> desteklenmiyor. <code>attention_dropout</code> kullanılmıyor, çünkü çıkarımda zaten 0.
 </Callout>
 
 <Predict q="Nedensel maskede softmax'a giren bir satır tamamen yasaklı olabilir mi?" hint="Token i hangi token'ları görebiliyor?">

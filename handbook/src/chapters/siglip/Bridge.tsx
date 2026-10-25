@@ -1,4 +1,4 @@
-// Bölüm 3: dizi şeridi, <loc> kutu aracı, projektör istatistikleri
+// Part 3: the sequence strip, the <loc> box tool, projector statistics
 import { useState } from "react";
 import { useData } from "../../lib/data";
 import { Histogram } from "../../components/charts";
@@ -6,11 +6,13 @@ import { Inspect } from "../../interact/Inspect";
 import { Loading, Stat } from "../../components/ui";
 import { useStore } from "../../store";
 import { Pickers } from "../uctan/Tour";
+import { useT } from "../../i18n";
 
 const BASE = import.meta.env.BASE_URL + "data/";
 const SHOW = (p: string) => p.replace("▁", "␣").replace("\n", "\\n");
 
 export function SequenceStrip() {
+  const tr = useT();
   const { data, error } = useData<any>("pipeline");
   const { imageIdx, promptIdx } = useStore();
   const [hov, setHov] = useState<{ i: number; x: number; y: number } | null>(null);
@@ -43,17 +45,17 @@ export function SequenceStrip() {
               {hov.i < nI ? (
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                   <div style={{ width: 56, height: 56, backgroundImage: `url(${BASE}img_${im.name}_224.png)`, backgroundSize: "896px 896px", backgroundPosition: `-${(hov.i % 16) * 56}px -${Math.floor(hov.i / 16) * 56}px`, imageRendering: "pixelated", borderRadius: 3 }} />
-                  <div><b>konum {hov.i}</b> · &lt;image&gt; (id {data.image_token_id})<div className="muted">birleştirmede yama ({Math.floor(hov.i / 16)}, {hov.i % 16}) buraya yazılacak</div></div>
+                  <div><b>{tr("position", "konum")} {hov.i}</b> · &lt;image&gt; (id {data.image_token_id})<div className="muted">{tr(`patch (${Math.floor(hov.i / 16)}, ${hov.i % 16}) is written here when merging`, `birleştirmede yama (${Math.floor(hov.i / 16)}, ${hov.i % 16}) buraya yazılacak`)}</div></div>
                 </div>
               ) : (
-                <><b>konum {hov.i}</b> · <span className="mono">{SHOW(p.text_pieces[hov.i - nI])}</span> · id {p.text_ids[hov.i - nI]}</>
+                <><b>{tr("position", "konum")} {hov.i}</b> · <span className="mono">{SHOW(p.text_pieces[hov.i - nI])}</span> · id {p.text_ids[hov.i - nI]}</>
               )}
             </Inspect>
           )}
         </div>
       </div>
       <div className="small muted" style={{ marginTop: 6 }}>
-        <span style={{ color: "var(--ax-T)" }}>■</span> 256 × &lt;image&gt; (her biri bir hücre, üstüne gel) · <span style={{ color: "var(--ax-V)" }}>■</span> metin · toplam <b style={{ color: "var(--fg)" }}>{p.length}</b> token · attention_mask hepsi 1
+        <span style={{ color: "var(--ax-T)" }}>■</span> 256 × &lt;image&gt; ({tr("one cell each, hover", "her biri bir hücre, üstüne gel")}) · <span style={{ color: "var(--ax-V)" }}>■</span> {tr("text", "metin")} · {tr("total", "toplam")} <b style={{ color: "var(--fg)" }}>{p.length}</b> token · {tr("attention_mask all 1", "attention_mask hepsi 1")}
       </div>
     </div>
   );
@@ -62,7 +64,7 @@ export function SequenceStrip() {
 const LOC_COLOR = ["var(--ax-T)", "var(--ax-D)", "var(--ax-T)", "var(--ax-D)"];
 const RULER = 20;
 
-/** Cetvel: 0–1023 bin ekseni, kutunun izdüşümü renkli bant */
+/** Ruler: the 0–1023 bin axis, the box's projection as a colored band */
 function LocRuler({ dir, lo, hi, color }: { dir: "x" | "y"; lo: number; hi: number; color: string }) {
   const h = dir === "x";
   const ticks = [0, 256, 512, 768, 1023];
@@ -76,14 +78,15 @@ function LocRuler({ dir, lo, hi, color }: { dir: "x" | "y"; lo: number; hi: numb
   );
 }
 
-/** Görüntü üzerinde kutu çiz → PaliGemma'nın <loc> token'ları */
+/** Draw a box on the image → PaliGemma's <loc> tokens */
 export function LocBoxTool() {
+  const tr = useT();
   const { data, error } = useData<any>("pipeline");
   const { imageIdx } = useStore();
   const [box, setBox] = useState<[number, number, number, number]>([0.3, 0.25, 0.7, 0.8]);   // y1 x1 y2 x2, [0, 1]
   const [drag, setDrag] = useState<[number, number] | null>(null);
-  const [gen, setGen] = useState(0);   // her bırakışta token satırı yeniden canlanır
-  if (!data) return <Loading what="görüntü" error={error} />;
+  const [gen, setGen] = useState(0);   // the token row animates again on every release
+  if (!data) return <Loading what={tr("image", "görüntü")} error={error} />;
   const im = data.images[imageIdx];
   const bin = (v: number) => Math.min(1023, Math.max(0, Math.floor(v * 1024)));
   const [y1, x1, y2, x2] = box;
@@ -110,10 +113,10 @@ export function LocBoxTool() {
             <div data-testid="loc-br" style={{ ...chip, left: `calc(${RULER}px + ${x2} * (100% - ${RULER}px))`, top: `calc(${RULER}px + ${y2} * (100% - ${RULER}px))`, transform: y2 < 0.92 ? "translate(-100%, 15%)" : "translate(calc(-100% - 4px), calc(-100% - 4px))" }}>{tok(2)}{tok(3)}</div>
           </>}
         </div>
-        <div className="small muted" style={{ marginTop: 6 }}>sürükleyerek bir kutu çiz · cetveller 1024 bin'i gösteriyor</div>
+        <div className="small muted" style={{ marginTop: 6 }}>{tr("drag to draw a box · the rulers show the 1024 bins", "sürükleyerek bir kutu çiz · cetveller 1024 bin'i gösteriyor")}</div>
       </div>
       <div>
-        <div className="small" style={{ marginBottom: 6 }}><b>Modelin yazacağı metin</b> (<code>detect tabela</code> için)</div>
+        <div className="small" style={{ marginBottom: 6 }}><b>{tr("The text the model would write", "Modelin yazacağı metin")}</b> ({tr("for", "")} <code>{tr("detect sign", "detect tabela")}</code>{tr("", " için")})</div>
         <div key={gen} className="mono" style={{ fontSize: 15, background: "var(--code-bg)", padding: "10px 12px", borderRadius: 6, wordBreak: "break-all", animation: drag ? "none" : "arch-in .4s ease", outline: drag ? "2px solid var(--accent)" : "none" }}>
           {toks.map((_, i) => <span key={i}>{tok(i)}</span>)} tabela
         </div>
@@ -125,15 +128,16 @@ export function LocBoxTool() {
             ))}
           </tbody>
         </table>
-        <p className="small muted" style={{ marginTop: 8 }}>Sıra <b>y, x, y, x</b>. Model kutuyu sayı olarak değil, sözlükteki 1024 özel token'dan dördünü <i>yazarak</i> üretiyor. Bu token'lar id 256000–257023 aralığında. 4.3'te normlarının ≈ 1 olduğunu görmüştük. Segmentasyon için ayrıca 128 <code>&lt;segXXX&gt;</code> token'ı var (bir VQ-VAE'nin kod kitabı).</p>
+        <p className="small muted" style={{ marginTop: 8 }}>{tr(<>The order is <b>y, x, y, x</b>. The model does not output the box as numbers: it <i>writes</i> four of the 1024 special tokens in its vocabulary. These tokens have ids 256000–257023. In 4.3 we saw that their norms are ≈ 1. For segmentation there are another 128 <code>&lt;segXXX&gt;</code> tokens (the codebook of a VQ-VAE).</>, <>Sıra <b>y, x, y, x</b>. Model kutuyu sayı olarak değil, sözlükteki 1024 özel token'dan dördünü <i>yazarak</i> üretiyor. Bu token'lar id 256000–257023 aralığında. 4.3'te normlarının ≈ 1 olduğunu görmüştük. Segmentasyon için ayrıca 128 <code>&lt;segXXX&gt;</code> token'ı var (bir VQ-VAE'nin kod kitabı).</>)}</p>
       </div>
     </div>
   );
 }
 
 export function ProjectorStats() {
+  const tr = useT();
   const { data, error } = useData<any>("pg_slices");
-  if (!data) return <Loading what="projektör" error={error} />;
+  if (!data) return <Loading what={tr("projector", "projektör")} error={error} />;
   const h = data.proj_hist;
   const centers: number[] = h.counts.map((_: number, i: number) => (h.edges[i] + h.edges[i + 1]) / 2);
   const synth: number[] = [];
@@ -141,8 +145,8 @@ export function ProjectorStats() {
   return (
     <div className="grid2">
       <div>
-        <div className="small"><b>Ağırlık</b> <span className="mono muted">[2048, 1152]</span> · 2.36 M değer</div>
-        <Histogram values={synth} bins={60} color="var(--ax-I)" xLabel="ağırlık değeri" />
+        <div className="small"><b>{tr("Weight", "Ağırlık")}</b> <span className="mono muted">[2048, 1152]</span> · 2.36 M {tr("values", "değer")}</div>
+        <Histogram values={synth} bins={60} color="var(--ax-I)" xLabel={tr("weight value", "ağırlık değeri")} />
         <div className="stats">
           <Stat label="std" value={data.proj_stats.std.toFixed(4)} sub={`ortalama ${data.proj_stats.mean.toExponential(1)}`} />
           <Stat label="max |w|" value={data.proj_stats.absmax.toFixed(3)} />
@@ -150,7 +154,7 @@ export function ProjectorStats() {
       </div>
       <div>
         <div className="small"><b>Bias</b> <span className="mono muted">[2048]</span></div>
-        <Histogram values={Array.from(data.proj_bias.data as Float32Array)} bins={60} color="var(--ax-D)" xLabel="bias değeri" />
+        <Histogram values={Array.from(data.proj_bias.data as Float32Array)} bins={60} color="var(--ax-D)" xLabel={tr("bias value", "bias değeri")} />
       </div>
     </div>
   );

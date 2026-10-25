@@ -1,4 +1,4 @@
-// 5.3 pilot: scrolly RMSNorm dizisi, sürüklenebilir laboratuvar, Mafs geometrisi, 3D keepdim.
+// 4.4: the RMSNorm scrolly, the draggable lab, Mafs geometry, 3D keepdim.
 import { ReactNode, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { PivotControls } from "@react-three/drei";
@@ -12,12 +12,14 @@ import { Cell, CellCanvas } from "../../../interact/cells";
 import { Stage3D, Cubes, Cube, Tag, View, Axes3D, cssColor } from "../../../interact/three";
 import { Loading, S, Seg } from "../../../components/ui";
 import type { PgSlices } from "./types";
+import { useLang, useT } from "../../../i18n";
+import type { L } from "../../../i18n";
 
 const D = 8;
 const TOK = ["<bos>", "caption", " tr", "\n"];
 const SHOW = (p: string) => p.replace("▁", "␣").replace("\n", "\\n");
 
-/** Gerçek veri: 4 prompt token'ının embedding'i (×√2048, ilk 8 boyut) ve katman 0 input_layernorm ağırlığı */
+/** Real data: embeddings of 4 prompt tokens (×√2048, first 8 dims) and the layer 0 input_layernorm weight */
 function useRealX() {
   const { data, error } = useData<PgSlices>("pg_slices");
   const v = useMemo(() => {
@@ -34,20 +36,22 @@ function useRealX() {
 
 const f = (x: number) => (Math.abs(x) >= 100 ? x.toFixed(0) : Math.abs(x) >= 10 ? x.toFixed(1) : x.toFixed(2));
 
-const STEP_CODE = [
-  ["x", "B, T, D", "girdi"],
-  ["x.pow(2)", "B, T, D", "eleman eleman kare"],
-  [".mean(-1, keepdim=True)", "B, T, 1", "son eksen boyunca ortalama"],
-  ["torch.rsqrt(… + self.eps)", "B, T, 1", "1 / √(ortalama + ε)"],
-  ["x * rsqrt  (broadcast)", "B, T, D", "[T, 1] sütunu D boyunca yayılıyor"],
-  ["_norm(x)", "B, T, D", "her satırın RMS'i artık 1"],
-  ["output * (1.0 + self.weight)", "B, T, D", "her boyut kendi katsayısıyla"],
+const STEP_CODE: [string, string, L<string>][] = [
+  ["x", "B, T, D", { en: "input", tr: "girdi" }],
+  ["x.pow(2)", "B, T, D", { en: "elementwise square", tr: "eleman eleman kare" }],
+  [".mean(-1, keepdim=True)", "B, T, 1", { en: "mean over the last axis", tr: "son eksen boyunca ortalama" }],
+  ["torch.rsqrt(… + self.eps)", "B, T, 1", { en: "1 / √(mean + ε)", tr: "1 / √(ortalama + ε)" }],
+  ["x * rsqrt  (broadcast)", "B, T, D", { en: "the [T, 1] column is broadcast along D", tr: "[T, 1] sütunu D boyunca yayılıyor" }],
+  ["_norm(x)", "B, T, D", { en: "every row now has RMS 1", tr: "her satırın RMS'i artık 1" }],
+  ["output * (1.0 + self.weight)", "B, T, D", { en: "each dim with its own coefficient", tr: "her boyut kendi katsayısıyla" }],
 ];
 
 export function RmsSequence({ step }: { step: number }) {
+  const lang = useLang();
+  const tr = useT();
   const { v, error } = useRealX();
   const [ref, W] = useWidth<HTMLDivElement>();
-  if (!v) return <div ref={ref}><Loading what="gerçek embedding'ler" error={error} /></div>;
+  if (!v) return <div ref={ref}><Loading what={tr("real embeddings", "gerçek embedding'ler")} error={error} /></div>;
   const T = v.rows.length;
   const st = v.rows.map((r) => rmsnormSteps(r.x, v.w));
   const gap = 4;
@@ -61,7 +65,7 @@ export function RmsSequence({ step }: { step: number }) {
   const cells: Cell[] = [];
   const maxOf = (a: number[]) => Math.max(...a.map(Math.abs));
   let max = 1;
-  // x hücreleri (aynı id'ler bütün adımlarda yaşıyor)
+  // x cells (the same ids live through all steps)
   for (let t = 0; t < T; t++) for (let d = 0; d < D; d++) {
     const s = st[t];
     const xv = s.x[d], sq = s.sq[d], nv = s.normed[d], out = s.out[d];
@@ -81,7 +85,7 @@ export function RmsSequence({ step }: { step: number }) {
     cells.push({ id: `x-${t}-${d}`, x, y, w: cs, h: cs, v: val, text: cs > 34 ? text : "", opacity, tip, group: `r${t}` });
   }
   max = step === 1 ? maxOf(st.flatMap((s) => s.sq)) : step === 5 ? 2.5 : step >= 6 ? maxOf(st.flatMap((s) => s.out)) : maxOf(st.flatMap((s) => s.x));
-  // ortalama / rsqrt sütunu [T, 1]
+  // the mean / rsqrt column [T, 1]
   for (let t = 0; t < T; t++) {
     const s = st[t];
     const on = step >= 2 && step <= 4;
@@ -91,21 +95,22 @@ export function RmsSequence({ step }: { step: number }) {
       fill: isR ? "var(--ax-T)" : "var(--fg-muted)", text: on ? (isR ? f(s.rsqrt) : f(s.meanSq)) : "", group: `r${t}`, z: 3,
       tip: () => isR ? <>rsqrt[t={t}] = 1/√({fmtNum(s.meanSq, 3)} + 1e-6) = <b>{fmtNum(s.rsqrt, 5)}</b></> : <>mean(x²) = ({s.sq.map((q) => f(q)).join(" + ")}) / {D} = <b>{fmtNum(s.meanSq, 3)}</b></>,
     });
-    // broadcast kopyaları: sütundan grid'e uçuyor
+    // broadcast copies: they fly from the column into the grid
     for (let d = 0; d < D; d++) {
       const bc = step === 4;
       cells.push({ id: `b-${t}-${d}`, x: bc ? gx(d) : colX, y: gy(t), w: cs, h: cs, fill: "var(--ax-T)", opacity: bc ? 0.85 : 0, text: bc && cs > 34 ? f(s.rsqrt) : "", group: `r${t}`, z: 2,
-        tip: () => <>yayılmış kopya: rsqrt[t={t}] = {fmtNum(s.rsqrt, 4)}<div className="muted">bellekte kopya yok, sadece görünüm</div></> });
+        tip: () => <>{tr("broadcast copy", "yayılmış kopya")}: rsqrt[t={t}] = {fmtNum(s.rsqrt, 4)}<div className="muted">{tr("no copy in memory, just a view", "bellekte kopya yok, sadece görünüm")}</div></> });
     }
   }
-  // w satırı [D] → [1, 1, D]
+  // the w row [D] → [1, 1, D]
   for (let d = 0; d < D; d++) {
     const on = step >= 6;
     cells.push({ id: `w-${d}`, x: gx(d), y: on ? y0 - cs - 14 : y0 - cs - 60, w: cs, h: cs * 0.7, fill: "var(--ax-hd)", opacity: on ? 1 : 0, text: on && cs > 34 ? f(1 + v.w[d]) : "", z: 3,
-      tip: () => <>1 + w[{d}] = 1 + {fmtNum(v.w[d], 4)} = <b>{fmtNum(1 + v.w[d], 4)}</b><div className="muted">gerçek katman 0 input_layernorm</div></> });
+      tip: () => <>1 + w[{d}] = 1 + {fmtNum(v.w[d], 4)} = <b>{fmtNum(1 + v.w[d], 4)}</b><div className="muted">{tr("real layer 0 input_layernorm", "gerçek katman 0 input_layernorm")}</div></> });
   }
 
-  const [code, shape, what] = STEP_CODE[Math.min(step, STEP_CODE.length - 1)];
+  const [code, shape, whatL] = STEP_CODE[Math.min(step, STEP_CODE.length - 1)];
+  const what = whatL[lang];
   const rowRms = (t: number) => {
     const a = step === 5 ? st[t].normed : step >= 6 ? st[t].out : step === 1 ? st[t].sq : st[t].x;
     return Math.sqrt(a.reduce((s, q) => s + q * q, 0) / D);
@@ -120,7 +125,7 @@ export function RmsSequence({ step }: { step: number }) {
           rms = {rowRms(t).toFixed(2)}
         </div>
       ))}
-      <div style={{ position: "absolute", left: x0, top: y0 + T * (cs + gap) + 6, fontSize: 12, color: "var(--ax-D)" }}>D → (gerçekte 2048, burada ilk 8)</div>
+      <div style={{ position: "absolute", left: x0, top: y0 + T * (cs + gap) + 6, fontSize: 12, color: "var(--ax-D)" }}>D → ({tr("2048 in reality, the first 8 here", "gerçekte 2048, burada ilk 8")})</div>
       {step >= 2 && step <= 5 && <div style={{ position: "absolute", left: colX, top: y0 - 22, fontSize: 12, color: "var(--fg-muted)" }}>[T, 1]</div>}
       <div style={{ position: "absolute", left: 0, top: y0 - 22, width: x0 - 10, textAlign: "right", fontSize: 12, color: "var(--ax-T)" }}>T ↓</div>
     </>
@@ -133,25 +138,26 @@ export function RmsSequence({ step }: { step: number }) {
         <span className="small muted">{what}</span>
       </div>
       <CellCanvas cells={cells} width={W} height={H} max={max} labels={labels} />
-      <div className="small muted">Hücrelerin üstüne gel: her sayının nasıl hesaplandığı görünür.</div>
+      <div className="small muted">{tr("Hover the cells to see how each number is computed.", "Hücrelerin üstüne gel: her sayının nasıl hesaplandığı görünür.")}</div>
     </div>
   );
 }
 
-/** Serbest laboratuvar: x ve w'yi sürükleyerek değiştir, bf16 ve Llama sırasıyla karşılaştır */
+/** Free lab: drag x and w to change them, compare bf16 and the Llama order */
 export function RmsPlayground() {
+  const tr = useT();
   const { v, error } = useRealX();
   const [ref, W] = useWidth<HTMLDivElement>();
   const [edit, setEdit] = useState<{ x?: number[][]; w?: number[] }>({});
   const [dtype, setDtype] = useState<"f32" | "bf16">("f32");
   const [order, setOrder] = useState<"gemma" | "llama">("gemma");
-  if (!v) return <div ref={ref}><Loading what="gerçek embedding'ler" error={error} /></div>;
+  if (!v) return <div ref={ref}><Loading what={tr("real embeddings", "gerçek embedding'ler")} error={error} /></div>;
   const X = edit.x ?? v.rows.map((r) => r.x);
   const w = edit.w ?? v.w;
   const T = X.length;
   const res = X.map((x) => rmsnormSteps(x, w, 1e-6, dtype, order));
   const ref2 = X.map((x) => rmsnormSteps(x, w, 1e-6, dtype, order === "gemma" ? "llama" : "gemma"));
-  // Düzen soldan sağa bir denklem: x × rsqrt × (1 + w) = çıktı
+  // The layout reads as an equation from left to right: x × rsqrt × (1 + w) = output
   const gap = 3, op = 34;
   const xL = 64;
   const cs = Math.max(20, Math.min(40, (W - xL - 4 * op - 3 * gap * D) / (3 * D + 1.4)));
@@ -170,18 +176,18 @@ export function RmsPlayground() {
     const diff = r.out[d] !== ref2[t].out[d];
     if (diff) ndiff++;
     cells.push({ id: `x${t}${d}`, x: xL + d * (cs + gap), y: gy(t), w: cs, h: cs, v: X[t][d] / maxX * 2.5, text: cs > 30 ? f(X[t][d]) : "", editable: true, group: `r${t}`,
-      tip: () => <>x[{t},{d}] = <b>{fmtNum(X[t][d], 4)}</b><div className="muted">yukarı/aşağı sürükle</div></> });
+      tip: () => <>x[{t},{d}] = <b>{fmtNum(X[t][d], 4)}</b><div className="muted">{tr("drag up/down", "yukarı/aşağı sürükle")}</div></> });
     cells.push({ id: `o${t}${d}`, x: xO + d * (cs + gap), y: gy(t), w: cs, h: cs, v: r.out[d] / maxO * 2.5, text: cs > 30 ? f(r.out[d]) : "", ring: dtype === "bf16" && diff, group: `r${t}`,
       tip: () => <>
         <div>x · rsqrt · (1+w) = {fmtNum(r.x[d], 3)} × {fmtNum(r.rsqrt, 4)} × {fmtNum(r.scale[d], 3)}</div>
-        <div>= <b>{r.out[d]}</b> <span className="muted">({dtype}, {order} sırası)</span></div>
-        {dtype === "bf16" && <div className="muted">öbür sıra: {ref2[t].out[d]} {diff ? "· FARKLI" : "· aynı"}</div>}
+        <div>= <b>{r.out[d]}</b> <span className="muted">({dtype}, {order} {tr("order", "sırası")})</span></div>
+        {dtype === "bf16" && <div className="muted">{tr("other order", "öbür sıra")}: {ref2[t].out[d]} {diff ? tr("· DIFFERENT", "· FARKLI") : tr("· same", "· aynı")}</div>}
       </> });
   }
   for (let t = 0; t < T; t++) cells.push({ id: `r${t}`, x: xR, y: gy(t), w: cs * 1.4, h: cs, fill: "var(--ax-T)", text: f(res[t].rsqrt), group: `r${t}`,
-    tip: () => <>rms(x) = {fmtNum(Math.sqrt(res[t].meanSq), 4)} → 1 / rms = <b>{fmtNum(res[t].rsqrt, 5)}</b><div className="muted">satırın bütün elemanları bununla çarpılıyor</div></> });
+    tip: () => <>rms(x) = {fmtNum(Math.sqrt(res[t].meanSq), 4)} → 1 / rms = <b>{fmtNum(res[t].rsqrt, 5)}</b><div className="muted">{tr("every element of the row is multiplied by this", "satırın bütün elemanları bununla çarpılıyor")}</div></> });
   for (let d = 0; d < D; d++) cells.push({ id: `w${d}`, x: xWv + d * (cs + gap), y: yMid - cs / 2, w: cs, h: cs, fill: "var(--ax-hd)", text: cs > 30 ? f(1 + w[d]) : "", editable: true,
-    tip: () => <>1 + w[{d}] = <b>{fmtNum(1 + w[d], 4)}</b><div className="muted">her satırın {d}. sütunu bununla çarpılıyor · sürükle</div></> });
+    tip: () => <>1 + w[{d}] = <b>{fmtNum(1 + w[d], 4)}</b><div className="muted">{tr(`column ${d} of every row is multiplied by this · drag`, `her satırın ${d}. sütunu bununla çarpılıyor · sürükle`)}</div></> });
   const onDrag = (id: string, dy: number) => {
     if (id.startsWith("x")) {
       const t = +id[1], d = +id.slice(2);
@@ -205,7 +211,7 @@ export function RmsPlayground() {
     {head(xL, blockW, <>x <span style={{ fontWeight: 400 }}>↕</span></>, "[T, D]")}
     {head(xR - 10, cs * 1.4 + 20, "1 / rms", "[T, 1]", "var(--ax-T)")}
     {head(xWv, blockW, <>1 + w <span style={{ fontWeight: 400 }}>↕</span></>, "[D]", "var(--ax-hd)")}
-    {head(xO, blockW, "çıktı", "[T, D]")}
+    {head(xO, blockW, tr("output", "çıktı"), "[T, D]")}
     {opSign(xL + blockW, "×")}{opSign(xR + cs * 1.4, "×")}{opSign(xWv + blockW, "=")}
     {X.map((_, t) => <div key={t} style={{ position: "absolute", left: 0, top: gy(t), height: cs, width: xL - 10, textAlign: "right", lineHeight: `${cs}px`, fontFamily: "var(--mono)", fontSize: 12, color: "var(--ax-T)" }}>{SHOW(v.rows[t].piece)}</div>)}
   </>;
@@ -214,20 +220,20 @@ export function RmsPlayground() {
       <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end", marginBottom: 10 }}>
         <div className="row" style={{ gap: 18 }}>
           <Seg value={dtype} onChange={setDtype} options={[["f32", "float32"], ["bf16", "bfloat16"]]} />
-          <Seg value={order} onChange={setOrder} options={[["gemma", "Gemma sırası"], ["llama", "Llama sırası"]]} />
+          <Seg value={order} onChange={setOrder} options={[["gemma", tr("Gemma order", "Gemma sırası")], ["llama", tr("Llama order", "Llama sırası")]]} />
         </div>
         <div className="row" style={{ gap: 4 }}>
           <button className="btn" onClick={() => setEdit({ ...edit, x: X.map((r) => r.map((a) => a * 10)) })}>x × 10</button>
           <button className="btn" onClick={() => setEdit({ ...edit, w: w.map(() => 0) })}>w = 0</button>
-          <button className="btn" onClick={() => setEdit({})}>gerçek değerler</button>
+          <button className="btn" onClick={() => setEdit({})}>{tr("real values", "gerçek değerler")}</button>
         </div>
       </div>
       <CellCanvas cells={cells} width={W} height={H} max={2.5} onDrag={onDrag} labels={labels} />
       <div className="small muted" style={{ marginTop: 6 }}>
-        <b style={{ color: "var(--fg)" }}>↕</b> işaretli bloklar (x ve 1 + w) yukarı-aşağı sürüklenebilir.{" "}
+        <b style={{ color: "var(--fg)" }}>↕</b> {tr("The marked blocks (x and 1 + w) can be dragged up and down.", "işaretli bloklar (x ve 1 + w) yukarı-aşağı sürüklenebilir.")}{" "}
         {dtype === "bf16"
-          ? <><span style={{ display: "inline-block", width: 12, height: 12, borderRadius: 2, outline: "2px solid var(--accent)", outlineOffset: 1, verticalAlign: -1, margin: "0 5px 0 3px" }} />Halkalı hücreler: Gemma ve Llama sırasının farklı sonuç verdiği yerler — <b style={{ color: "var(--fg)" }}>{ndiff} / {T * D}</b>. Fark 1 ulp, ama <code>exact=True</code> testi bunu yakalıyor.</>
-          : <>"x × 10" dene: rsqrt 10 kat küçülür, çıktı hiç değişmez. bfloat16'ya geçince iki işlem sırasının farkı görünür.</>}
+          ? <><span style={{ display: "inline-block", width: 12, height: 12, borderRadius: 2, outline: "2px solid var(--accent)", outlineOffset: 1, verticalAlign: -1, margin: "0 5px 0 3px" }} />{tr(<>Ringed cells: where the Gemma and Llama orders give different results: <b style={{ color: "var(--fg)" }}>{ndiff} / {T * D}</b>. The difference is 1 ulp, but an <code>exact=True</code> test catches it.</>, <>Halkalı hücreler: Gemma ve Llama sırasının farklı sonuç verdiği yerler: <b style={{ color: "var(--fg)" }}>{ndiff} / {T * D}</b>. Fark 1 ulp, ama <code>exact=True</code> testi bunu yakalıyor.</>)}</>
+          : tr(<>Try "x × 10": rsqrt shrinks 10×, the output does not change at all. Switch to bfloat16 to see the difference between the two orders.</>, <>"x × 10" dene: rsqrt 10 kat küçülür, çıktı hiç değişmez. bfloat16'ya geçince iki işlem sırasının farkı görünür.</>)}
       </div>
     </div>
   );
@@ -235,8 +241,9 @@ export function RmsPlayground() {
 
 type NormMode = "rms" | "w" | "ln";
 
-/** Geometri: üst düzey kontroller (mod, boyut, (1+w) kaydırıcıları), altında 3D ya da 2D sahne */
+/** Geometry: controls on top (mode, dims, (1+w) sliders), a 3D or 2D scene below */
 export function NormGeometry() {
+  const tr = useT();
   const [mode, setMode] = useState<NormMode>("rms");
   const [dim, setDim] = useState<3 | 2>(3);
   const [w, setW] = useState([0.6, -0.4, 0.2]);
@@ -246,7 +253,7 @@ export function NormGeometry() {
       <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end", marginBottom: 10, gap: 16, flexWrap: "wrap" }}>
         <div className="row" style={{ gap: 18 }}>
           <Seg value={mode} onChange={setMode} options={[["rms", "RMSNorm"], ["w", "RMSNorm · (1+w)"], ["ln", "LayerNorm"]]} />
-          <Seg value={dim} onChange={setDim} options={[[3, "3 boyut"], [2, "2 boyut"]]} />
+          <Seg value={dim} onChange={setDim} options={[[3, tr("3 dims", "3 boyut")], [2, tr("2 dims", "2 boyut")]]} />
         </div>
         {mode === "w" && (
           <div className="row small" style={{ gap: 16, alignItems: "center", flexWrap: "wrap" }}>
@@ -263,8 +270,9 @@ export function NormGeometry() {
 
 const normMap = (mode: NormMode, q: number[], w: number[]) => mode === "ln" ? layernorm(q) : rmsnormSteps(q, mode === "w" ? w.slice(0, q.length) : q.map(() => 0)).out;
 
-/** d = 3: RMSNorm küreye (yarıçap √3), (1+w) elipsoide, LayerNorm x+y+z=0 düzlemindeki çembere indiriyor */
+/** d = 3: RMSNorm maps onto a sphere (radius √3), (1+w) onto an ellipsoid, LayerNorm onto a circle in the plane x+y+z=0 */
 function NormSpace3D({ mode, w }: { mode: NormMode; w: number[] }) {
+  const tr = useT();
   const samples = useMemo(() => { const r = rng(7); return Array.from({ length: 60 }, () => [r.normal() * 1.3 + 0.5, r.normal() * 1.0 + 0.3, r.normal() * 1.1 + 0.2]); }, []);
   const [x, setX] = useState([2.2, 1.1, 0.6]);
   const R = Math.sqrt(3);
@@ -272,7 +280,7 @@ function NormSpace3D({ mode, w }: { mode: NormMode; w: number[] }) {
   const items: Cube[] = [];
   samples.forEach((q, i) => {
     const m = normMap(mode, q, w);
-    items.push({ id: "i" + i, pos: q as any, size: [0.07, 0.07, 0.07], color: cssColor("--fg-faint"), tip: () => <>girdi ({q.map((a) => a.toFixed(2)).join(", ")})<div className="muted">rms = {Math.sqrt((q[0] ** 2 + q[1] ** 2 + q[2] ** 2) / 3).toFixed(2)}</div></> });
+    items.push({ id: "i" + i, pos: q as any, size: [0.07, 0.07, 0.07], color: cssColor("--fg-faint"), tip: () => <>{tr("input", "girdi")} ({q.map((a) => a.toFixed(2)).join(", ")})<div className="muted">rms = {Math.sqrt((q[0] ** 2 + q[1] ** 2 + q[2] ** 2) / 3).toFixed(2)}</div></> });
     items.push({ id: "o" + i, pos: m as any, size: [0.11, 0.11, 0.11], color: cssColor(color.slice(4, -1)), tip: () => <>norm = ({m.map((a) => a.toFixed(2)).join(", ")})<div className="muted">|norm| = {Math.hypot(...m).toFixed(3)}</div></> });
   });
   const img = normMap(mode, x, w);
@@ -302,16 +310,16 @@ function NormSpace3D({ mode, w }: { mode: NormMode; w: number[] }) {
         <Tag position={[img[0], img[1] + 0.3, img[2]]} color="var(--accent)" weight={650}>norm(x)</Tag>
       </Stage3D>
       <div className="small muted" style={{ marginTop: 8 }}>
-        Büyük mavi noktayı oklarıyla sürükle. x = ({x.map((a) => a.toFixed(2)).join(", ")}), rms(x) = {Math.sqrt((x[0] ** 2 + x[1] ** 2 + x[2] ** 2) / 3).toFixed(3)} → norm(x) = ({img.map((a) => a.toFixed(2)).join(", ")}).{" "}
-        {mode === "rms" && "Bütün noktalar √3 yarıçaplı küreye iniyor: yön korunuyor, büyüklük atılıyor. d = 2048'de küre yarıçapı √2048 ≈ 45.25."}
-        {mode === "w" && "(1+w) her ekseni ayrı ölçekliyor: küre elipsoide dönüşüyor. Bir katsayıyı 0'ın altına çek, o eksen ters döner."}
-        {mode === "ln" && "LayerNorm önce ortalamayı çıkarıyor: noktalar x₀ + x₁ + x₂ = 0 düzlemine iniyor. Sonra ölçekliyor: düzlemdeki √3 yarıçaplı çembere. Bütün boyutların ortak kayması (1, 1, 1) yönü silindi. RMSNorm bu bilgiyi koruyor."}
+        {tr("Drag the big blue point by its arrows.", "Büyük mavi noktayı oklarıyla sürükle.")} x = ({x.map((a) => a.toFixed(2)).join(", ")}), rms(x) = {Math.sqrt((x[0] ** 2 + x[1] ** 2 + x[2] ** 2) / 3).toFixed(3)} → norm(x) = ({img.map((a) => a.toFixed(2)).join(", ")}).{" "}
+        {mode === "rms" && tr("All points land on the sphere of radius √3: direction is kept, magnitude is dropped. At d = 2048 the radius is √2048 ≈ 45.25.", "Bütün noktalar √3 yarıçaplı küreye iniyor: yön korunuyor, büyüklük atılıyor. d = 2048'de küre yarıçapı √2048 ≈ 45.25.")}
+        {mode === "w" && tr("(1+w) scales each axis separately: the sphere becomes an ellipsoid. Pull a coefficient below 0 and that axis flips.", "(1+w) her ekseni ayrı ölçekliyor: küre elipsoide dönüşüyor. Bir katsayıyı 0'ın altına çek, o eksen ters döner.")}
+        {mode === "ln" && tr("LayerNorm subtracts the mean first: the points drop onto the plane x₀ + x₁ + x₂ = 0. Then it scales them onto the circle of radius √3 in that plane. The shared shift of all dims, the (1, 1, 1) direction, is erased. RMSNorm keeps it.", "LayerNorm önce ortalamayı çıkarıyor: noktalar x₀ + x₁ + x₂ = 0 düzlemine iniyor. Sonra ölçekliyor: düzlemdeki √3 yarıçaplı çembere. Bütün boyutların ortak kayması (1, 1, 1) yönü silindi. RMSNorm bu bilgiyi koruyor.")}
       </div>
     </div>
   );
 }
 
-/** Çocuklarının ölçeğini hedefe yumuşakça taşır (küre ↔ elipsoid) */
+/** Smoothly moves its children's scale to the target (sphere ↔ ellipsoid) */
 function EaseScale({ target, children }: { target: [number, number, number]; children: ReactNode }) {
   const ref = useRef<THREE.Group>(null);
   const tv = useMemo(() => new THREE.Vector3(), []);
@@ -325,7 +333,7 @@ function Segment({ a, b }: { a: number[]; b: number[] }) {
   return <lineSegments geometry={geo}><lineBasicMaterial color={cssColor("--accent")} /></lineSegments>;
 }
 
-/** Eksen oklarıyla sürüklenen nokta; sürüklerken kamera kontrolü kapalı */
+/** A point dragged by its axis arrows; camera control is off while dragging */
 function DragPoint({ value, onChange }: { value: number[]; onChange: (v: number[]) => void }) {
   const controls = useThree((s) => s.controls) as any;
   const m = useMemo(() => new THREE.Matrix4().makeTranslation(value[0], value[1], value[2]), []);
@@ -339,8 +347,9 @@ function DragPoint({ value, onChange }: { value: number[]; onChange: (v: number[
   );
 }
 
-/** Mafs: d = 2'de RMSNorm (çember), (1+w) (elips), LayerNorm (iki nokta) */
+/** Mafs: at d = 2, RMSNorm (circle), (1+w) (ellipse), LayerNorm (two points) */
 function NormPlane({ mode, w }: { mode: NormMode; w: number[] }) {
+  const tr = useT();
   const [w0, w1] = w;
   const p = useMovablePoint([2.2, 0.8], { color: "var(--accent)" });
   const samples = useMemo(() => { const r = rng(4); return Array.from({ length: 36 }, () => [r.normal() * 1.4 + 0.4, r.normal() * 1.1 + 0.3] as [number, number]); }, []);
@@ -371,18 +380,19 @@ function NormPlane({ mode, w }: { mode: NormMode; w: number[] }) {
       </Mafs>
       </div>
       <div className="small muted" style={{ marginTop: 8 }}>
-        x noktasını sürükle. x = ({p.x.toFixed(2)}, {p.y.toFixed(2)}), rms(x) = {rms.toFixed(3)} → norm(x) = ({img[0].toFixed(3)}, {img[1].toFixed(3)}).{" "}
-        {mode === "rms" && "Nereye sürüklersen sürükle, görüntüsü √2 yarıçaplı çemberden ayrılmıyor: yön korunuyor, büyüklük atılıyor."}
-        {mode === "w" && "(1+w) her ekseni ayrı ölçekliyor: çember elipse dönüşüyor. Bir katsayıyı 0'ın altına çek, o eksen ters döner."}
-        {mode === "ln" && "d = 2'de LayerNorm'dan geriye sadece iki nokta kalıyor: (1, −1) ve (−1, 1). Bu yanıltıcı derecede sert. 3 boyuta geçince ne olduğunu daha iyi görürsün."}
+        {tr("Drag the point x.", "x noktasını sürükle.")} x = ({p.x.toFixed(2)}, {p.y.toFixed(2)}), rms(x) = {rms.toFixed(3)} → norm(x) = ({img[0].toFixed(3)}, {img[1].toFixed(3)}).{" "}
+        {mode === "rms" && tr("Wherever you drag it, its image stays on the circle of radius √2: direction is kept, magnitude is dropped.", "Nereye sürüklersen sürükle, görüntüsü √2 yarıçaplı çemberden ayrılmıyor: yön korunuyor, büyüklük atılıyor.")}
+        {mode === "w" && tr("(1+w) scales each axis separately: the circle becomes an ellipse. Pull a coefficient below 0 and that axis flips.", "(1+w) her ekseni ayrı ölçekliyor: çember elipse dönüşüyor. Bir katsayıyı 0'ın altına çek, o eksen ters döner.")}
+        {mode === "ln" && tr("At d = 2 only two points survive LayerNorm: (1, −1) and (−1, 1). That is misleadingly harsh; switch to 3 dims to see what really happens.", "d = 2'de LayerNorm'dan geriye sadece iki nokta kalıyor: (1, −1) ve (−1, 1). Bu yanıltıcı derecede sert. 3 boyuta geçince ne olduğunu daha iyi görürsün.")}
       </div>
     </div>
   );
 }
 
-/** 3D: [B, T, D] → mean(-1, keepdim) → [B, T, 1] → broadcast. Her küp kimliğini koruyor */
+/** 3D: [B, T, D] → mean(-1, keepdim) → [B, T, 1] → broadcast. Every cube keeps its identity */
 const B3 = 2, T3 = 3, D3 = 6;
 export function Keepdim3DScene({ step }: { step: number }) {
+  const tr = useT();
   const vals = useMemo(() => { const r = rng(9); return Array.from({ length: B3 * T3 * D3 }, () => r.normal()); }, []);
   const c = 0.5, g = 0.56, pad = 0.1;
   const pos = (b: number, t: number, d: number): [number, number, number] => [(d - D3 / 2) * g, (T3 / 2 - t) * g, (b - B3 / 2) * g * 1.7];
@@ -397,12 +407,12 @@ export function Keepdim3DScene({ step }: { step: number }) {
       items.push({ id: `x${b}${t}${d}`, pos: collapsed ? pos(b, t, D3 + 0.8) : pos(b, t, d), color: col(v), hidden: collapsed, dim: step === 2,
         tip: () => <>x[b={b}, t={t}, d={d}] = <b>{v.toFixed(3)}</b></> });
     }
-    // ortalama küpü
+    // the mean cube
     items.push({ id: `m${b}${t}`, pos: pos(b, t, D3 + 0.8), color: "#2a78d6", hidden: step === 0,
-      tip: () => <>mean(x²)[b={b}, t={t}] = <b>{ms.toFixed(3)}</b><div className="muted">şekil [B, T, 1]</div></> });
-    // yayılmış kopyalar
+      tip: () => <>mean(x²)[b={b}, t={t}] = <b>{ms.toFixed(3)}</b><div className="muted">{tr("shape", "şekil")} [B, T, 1]</div></> });
+    // broadcast copies
     for (let d = 0; d < D3; d++) items.push({ id: `c${b}${t}${d}`, pos: step === 2 ? [pos(b, t, d)[0], pos(b, t, d)[1] + 0.0, pos(b, t, d)[2] + 0.3] : pos(b, t, D3 + 0.8), color: "#2a78d6", hidden: step !== 2, size: [c * 0.7, c * 0.7, c * 0.25],
-      tip: () => <>yayılmış: rms[b={b}, t={t}] (aynı sayı, D kez)</> });
+      tip: () => <>{tr("broadcast", "yayılmış")}: rms[b={b}, t={t}] ({tr("the same number, D times", "aynı sayı, D kez")})</> });
   }
   const views: View[] = [
     { pos: [2.0, 2.3, 4.6], target: [0.1, 0.1, -0.4] },
@@ -412,7 +422,7 @@ export function Keepdim3DScene({ step }: { step: number }) {
   return (
     <Stage3D view={views[Math.min(step, 2)]} height={420}>
       <Cubes items={items} cell={c} tween={{ duration: 0.8, stagger: 0.008 }} />
-      {/* Eksenler bloğun sol-üst-ön köşesinden çıkıyor: D sağa, T aşağı, B geriye */}
+      {/* The axes start at the block's top-left-front corner: D to the right, T down, B back */}
       <Axes3D origin={[(step === 1 ? D3 + 0.8 - D3 / 2 : -D3 / 2) * g - c / 2 - pad, (T3 / 2) * g + c / 2 + pad, (B3 / 2 - 1) * g * 1.7 + c / 2 + pad]} axes={[
         { dir: [1, 0, 0], len: (step === 1 ? 1 : D3) * g + pad, ticks: step === 1 ? 1 : D3, color: "var(--ax-D)", label: step === 1 ? "D = 1" : `D = ${D3}`, labelOffset: [-0.45, 0.3, 0] },
         { dir: [0, -1, 0], len: T3 * g + pad, ticks: T3, color: "var(--ax-T)", label: `T = ${T3}` },

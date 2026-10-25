@@ -6,15 +6,15 @@ import { Link } from "react-router-dom";
 
 # Gemma haritası
 
-<p className="lead">Bu bölümün ilk yarısı Gemma'nın attention dışındaki parçalarını, son üç sayfası attention'ı anlatıyor. Ayrıntıya girmeden önce bütün parçaların nerede durduğuna ve modelin ağırlığının nerede toplandığına bakalım.</p>
+<p className="lead">Bu bölümün ilk yarısı Gemma'nın attention dışındaki parçalarını, sonraki sayfaları attention'ı ve KV cache'i anlatıyor. Ayrıntıya girmeden önce bütün parçaların nerede durduğuna ve modelin ağırlığının nerede toplandığına bakalım.</p>
 
 Gemma'nın işi tek cümleyle şu: <S s="B, T" /> token id'lerini alıp <S s="B, T, V" /> logit'lere çevirmek. Arada her token bir <S s="D" /> vektörü olarak 18 katman boyunca taşınıyor. PaliGemma'da girişteki token'ların 256'sı görüntüden geliyor.
 
 ## Modül ağacı
 
-Aşağıdaki ağaç, senin `gemma.py` ve `paligemma.py` sınıflarının **gerçek config** ile kurulmuş hali. Giriş/çıkış şekilleri gerçek bir forward sırasında yakalandı (260 token: 256 görüntü + `<bos>` + "caption tr" + `\n`). Bir düğüme tıkla.
+Aşağıdaki ağaç, projedeki `gemma.py` ve `paligemma.py` sınıflarının **gerçek config** ile kurulmuş hali. Giriş/çıkış şekilleri gerçek bir forward sırasında yakalandı (260 token: 256 görüntü + `<bos>` + "caption tr" + `\n`). Bir düğüme tıkla.
 
-<Fig wide caption={<><b>Senin modelin, meta cihazında.</b> ✓ işaretli anahtarlar gerçek checkpoint'te de var, yani ağırlık yüklenince doğrudan oturacak. <code>self_attn</code> altındaki dört <code>Linear</code> da checkpoint'le eşleşiyor. Tek ○ olan <code>lm_head.weight</code>: tying yüzünden checkpoint'te yok (<Link to="/gemma/tying">4.8</Link>).</>}>
+<Fig wide caption={<><b>Projenin modeli, meta cihazında.</b> ✓ işaretli anahtarlar gerçek checkpoint'te de var, yani ağırlık yüklenince doğrudan oturacak. <code>self_attn</code> altındaki dört <code>Linear</code> da checkpoint'le eşleşiyor. Tek ○ olan <code>lm_head.weight</code>: tying yüzünden checkpoint'te yok (<Link to="/gemma/tying">4.8</Link>).</>}>
 <ModuleTreeView />
 </Fig>
 
@@ -37,7 +37,7 @@ Gemma tarafında tek bir forward'da tensörün başına gelen her şey. Dikdört
 <Step>**`embed_tokens`**: her id tablodan bir satır seçiyor ve son eksen 2048 oluyor. Bu bir hesap değil, indeksleme. `<image>` konumları da tablodan geçiyor ama birazdan üzerlerine yazılacak.</Step>
 <Step>**Birleştirme** (`paligemma.py`): metin embedding'leri √d = 45.25 ile çarpılıyor, 256 görsel konuma projektörden gelen özellikler **ölçeksiz** yazılıyor (mor). Şekil değişmiyor (<Link to="/gemma/sqrt-d">4.3</Link>).</Step>
 <Step>**`GemmaModel` girişi**: dizi zaten ölçekli geliyor (`scale_embeddings=False`), ikinci kez çarpılmıyor. Saf Gemma kullanımında bu çarpım `GemmaModel.forward`'ın ilk işi.</Step>
-<Step>**18 decoder katmanı**: her katman <S s="B, T, D" /> alıp <S s="B, T, D" /> veriyor. Katmanlar aynı akışa okuyup yazıyor (<Link to="/gemma/akis">4.2</Link>).</Step>
+<Step>**18 decoder katmanı**: her katman <S s="B, T, D" /> alıp <S s="B, T, D" /> veriyor. Katmanlar aynı akışa okuyup yazıyor (<Link to="/gemma/residual">4.2</Link>).</Step>
 <Step>**Son norm**: akış tek bir kez normalize ediliyor (<Link to="/gemma/rmsnorm">4.4</Link>).</Step>
 <Step>**lm_head**: son eksen 2048'den **257216**'ya genişliyor, her konum için sözlükteki her token'a bir skor. float32'de 260 × 257216 × 4 bayt ≈ 255 MB (<Link to="/gemma/tying">4.8</Link>).</Step>
 </Scrolly>
@@ -50,13 +50,14 @@ Gemma tarafında tek bir forward'da tensörün başına gelen her şey. Dikdört
 
 | | Konu | Kodda |
 |---|---|---|
-| <Link to="/gemma/akis">4.2</Link> | Residual akışı ("otoyol"), pre-norm | `GemmaDecoderLayer.forward` |
+| <Link to="/gemma/residual">4.2</Link> | Residual akışı ("otoyol"), pre-norm | `GemmaDecoderLayer.forward` |
 | <Link to="/gemma/sqrt-d">4.3</Link> | √d ölçeği, görsel token'lar neden çarpılmıyor, bf16 | `GemmaModel.forward`, `_merge_input_ids_with_image_features` |
 | <Link to="/gemma/rmsnorm">4.4</Link> | RMSNorm: (1+w), float32, keepdim, işlem sırası | `GemmaRMSNorm` |
 | <Link to="/gemma/geglu">4.5</Link> | GeGLU: gate/up/down | `GemmaMLP` |
-| <Link to="/gemma/katman">4.6</Link> | Decoder katmanının iskeleti | `GemmaDecoderLayer` |
+| <Link to="/gemma/layer">4.6</Link> | Decoder katmanının iskeleti | `GemmaDecoderLayer` |
 | <Link to="/gemma/model">4.7</Link> | ModuleList, son norm | `GemmaModel` |
 | <Link to="/gemma/tying">4.8</Link> | Weight tying, `logits.float()` | `GemmaForCausalLM`, `tie_weights` |
 | <Link to="/gemma/rope">4.9</Link> | RoPE: konumu dönerek vermek, rotate_half, float32 açılar | `GemmaRotaryEmbedding`, `rotate_half`, `apply_rotary_pos_emb` |
 | <Link to="/gemma/mqa">4.10</Link> | MQA/GQA: 8 Q, 1 KV head, KV cache boyutu | `repeat_kv` |
 | <Link to="/gemma/attention">4.11</Link> | Skor, 1/√head_dim, nedensel maske, katmana bağlanış | `GemmaAttention`, `make_causal_mask` |
+| <Link to="/gemma/kv-cache">4.12</Link> | KV cache: prefill, token token üretim, konum ve maske | `KVCache`, `generate` |

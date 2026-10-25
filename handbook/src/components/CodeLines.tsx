@@ -1,11 +1,11 @@
-// Scrolly figürleri için sade kod paneli: bir sembolün satırları, aktif satır(lar) vurgulu.
+// A plain code panel for scrolly figures: a symbol's lines, with the active line(s) highlighted.
 import { useEffect, useMemo, useRef } from "react";
 import { DIRS, findSymbol } from "../lib/pysource";
 
 export function CodeLines({ file, symbol, active = [], maxHeight = 420, withComments = false }: { file: string; symbol: string; active?: string[]; maxHeight?: number; withComments?: boolean }) {
   const snip = useMemo(() => findSymbol(file, symbol, withComments), [file, symbol, withComments]);
   const box = useRef<HTMLDivElement>(null);
-  // "metin::n" → metnin n. geçtiği satır (0 tabanlı); düz metin → bütün geçtiği satırlar
+  // "text::n" → the line of the n-th occurrence (0-based); plain text → every line it occurs on
   const hits = useMemo(() => {
     const on = new Set<number>();
     for (const a of active) {

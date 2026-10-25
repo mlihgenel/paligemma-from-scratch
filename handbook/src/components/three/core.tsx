@@ -1,12 +1,14 @@
-// 3D ortak parçalar: sahne, tensör kutusu, etiket. Etiketler DOM (drei Html), tema renklerini kullanır.
+// Shared 3D pieces: stage, tensor box, label. Labels are DOM (drei Html) and use the theme colors.
 import { ReactNode, Suspense, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Edges, Html, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
+import { useT } from "../../i18n";
 
 export function Stage({ children, height = 380, camera = [6, 4, 8] as [number, number, number], fov = 40, autoRotate = false, target = [0, 0, 0] as [number, number, number], controls = true }: {
   children: ReactNode; height?: number; camera?: [number, number, number]; fov?: number; autoRotate?: boolean; target?: [number, number, number]; controls?: boolean;
 }) {
+  const t = useT();
   return (
     <div style={{ height, position: "relative", borderRadius: 8, overflow: "hidden", background: "var(--stage-bg)" }}>
       <Canvas camera={{ position: camera, fov }} dpr={[1, 2]} gl={{ antialias: true, preserveDrawingBuffer: true }}>
@@ -16,7 +18,7 @@ export function Stage({ children, height = 380, camera = [6, 4, 8] as [number, n
         <Suspense fallback={null}>{children}</Suspense>
         {controls && <OrbitControls makeDefault enableDamping autoRotate={autoRotate} autoRotateSpeed={0.6} target={target} enablePan={false} />}
       </Canvas>
-      {controls && <div style={{ position: "absolute", bottom: 8, right: 12, pointerEvents: "none", fontFamily: "var(--sans)", fontSize: 11.5, color: "var(--fg-faint)" }}>sürükle: döndür · kaydır: yakınlaş</div>}
+      {controls && <div style={{ position: "absolute", bottom: 8, right: 12, pointerEvents: "none", fontFamily: "var(--sans)", fontSize: 11.5, color: "var(--fg-faint)" }}>{t("drag: rotate · scroll: zoom", "sürükle: döndür · kaydır: yakınlaş")}</div>}
     </div>
   );
 }
@@ -32,7 +34,7 @@ export function Label({ position, children, color, size = 12, bold = false, cent
   );
 }
 
-/** Animasyonlu boyutlu kutu: size değişince yumuşak geçiş */
+/** Animated sized box: smooth transition when size changes */
 export function TBox({ size, position = [0, 0, 0], color = "#d0731d", opacity = 0.85, edges = true, onClick, highlight = false, wire = false }: {
   size: [number, number, number]; position?: [number, number, number]; color?: string; opacity?: number; edges?: boolean;
   onClick?: () => void; highlight?: boolean; wire?: boolean;
@@ -59,10 +61,10 @@ export function TBox({ size, position = [0, 0, 0], color = "#d0731d", opacity = 
   );
 }
 
-/** Boyutu görsel uzunluğa çevir: büyük boyutlar log ölçekte (2048 ve 16384 ekrana sığsın) */
+/** Map a dim to a visual length: large dims on a log scale (so 2048 and 16384 fit on screen) */
 export const vis = (n: number, k = 0.55) => Math.max(0.12, Math.log2(n + 1) * k);
 
-/** Tema rengini JS'de oku (three materyalleri CSS değişkeni kabul etmiyor) */
+/** Read a theme color in JS (three materials do not accept CSS variables) */
 export function cssVar(name: string): string {
   if (typeof window === "undefined") return "#888";
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888";

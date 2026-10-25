@@ -1,0 +1,108 @@
+import { Callout, Fig, Predict, S, Impact } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { BreakIt, ManimVideo } from "../../components/misc";
+import { StreamCompare, UpdateSizes } from "./w/Stream";
+import { HighwayScene } from "./w/Scenes3D";
+import { Scrolly, Step } from "../../interact/Scrolly";
+import { Note } from "../../components/ui";
+import { Link } from "react-router-dom";
+
+# The residual stream: a highway
+
+<p className="lead">The key to understanding Gemma is a single variable: <code>hidden_states</code>. It is a <b>highway</b> that flows unbroken through all 18 layers. Each layer reads a copy from this road and adds an update on top.</p>
+
+## The idea: layers do not replace the stream, they add to it
+
+In a classic neural network every layer takes its input and puts something new in its place: <span className="mono">h ← f(h)</span>. With a residual connection the layer only computes a difference, and that difference is added to the stream:
+
+$$
+h \leftarrow h + f(\mathrm{norm}(h))
+$$
+
+This line has two important consequences.
+
+- **The stream is never normalized.** `norm` only applies to the copy the branch sees. The stream itself can grow over the layers, and the final normalization happens once, in `self.norm` at the very end.
+- **Every layer's input is independent of scale.** The `norm(h)` that `f` sees always has a similar size (RMS ≈ 1·(1+w)), however large the stream gets. That is what keeps the layers balanced.
+
+## Follow one token's vector
+
+<Scrolly label="The residual stream, one token" figure={(s, p) => <HighwayScene step={s} progress={p} />}>
+<Step>
+**The stream.** The blue bars are one token's vector: each bar a dimension, its height the value. The vector enters the lane as embedding × √d. The lane is the `hidden_states` variable, the highway. Hover the bars to see their values.
+</Step>
+<Step>
+**The branch reads.** The attention block takes a **copy** of the stream and passes it through `input_layernorm`: the pink bars. The copy has RMS 1, however large the stream is. The stream itself waits in the lane unchanged (the `residual` variable in the code).
+</Step>
+<Step>
+**The branch computes.** The copy goes through `self_attn` and produces an **update**: the orange bars. In the experiments on this page the branch contains a random linear map instead of attention: to measure the stream's behavior, what the branch computes does not matter, only that it writes an update to the stream. Real attention is in <Link to="/gemma/attention">4.11</Link>.
+</Step>
+<Step>
+**⊕ Write to the stream.** The update drops into the lane and is **added** to the stream: <span className="mono">h ← h + f(norm(h))</span>. All the blue bars changed a little, but none was rescaled. The information from the embedding is still there.
+</Step>
+<Step>
+**The same for the MLP.** `post_attention_layernorm` takes a copy of the stream's new state, the MLP produces an update, and ⊕ adds it to the stream. A decoder layer is just these two branches.
+</Step>
+<Step>
+**After 18 layers.** The stream grew and changed a little in every layer, but was never normalized. Before going to lm_head, `model.norm` normalizes it once. Rotate the scene to compare the bars.
+</Step>
+</Scrolly>
+
+## Where is it in the code?
+
+<CodeWalk file="gemma.py" symbol="GemmaDecoderLayer.forward" notes={[
+  { match: "residual = hidden_states", title: "A copy of the stream", text: <>The stream's current value is saved. Saving it <b>before the norm</b> is critical: if the residual were taken from the normalized copy, the stream itself would get normalized ("What breaks?" below).</> },
+  { match: "self.input_layernorm(hidden_states)", title: "Branch: norm", text: <>After this line <code>hidden_states</code> is no longer the stream but a normalized copy. The stream waits in <code>residual</code>. The shape does not change: <S s="B, T, D" />.</> },
+  { match: "self.self_attn(hidden_states,", title: "Branch: attention", text: <>Information between tokens flows here: this branch is the only place where a token in the stream reads from other tokens and writes to the stream. The shape does not change: <S s="B, T, D" />. Besides the normalized copy, the branch also takes the RoPE table and the mask (<Link to="/gemma/attention">4.11</Link>).</> },
+  { match: "hidden_states = residual + hidden_states", title: "Write: add to the stream", text: <>The ⊕ point of the highway. The branch output is added to the stream. Both tensors are <S s="B, T, D" />, elementwise addition.</> },
+  { match: "self.post_attention_layernorm(hidden_states)", title: "Second branch: norm", text: <>The same pattern, this time for the MLP. The name is misleading: "post attention" because it comes <i>after</i> attention, but it is really the norm at the MLP's <i>input</i>. See <Link to="/gemma/layer">4.6</Link>.</> },
+  { match: "hidden_states = self.mlp(hidden_states)", title: "Branch: MLP", text: <>GeGLU. Each token is processed on its own. See <Link to="/gemma/geglu">4.5</Link>.</> },
+  { match: "return hidden_states", title: "Output", text: <>The same shape as the input, <S s="B, T, D" />. The next layer takes it as is. That is how 18 layers chain together.</> },
+]} />
+
+## What breaks? Saving the residual after the norm
+
+At first glance it looks harmless: two lines swap places, that's all. But the meaning of the highway changes completely.
+
+<BreakIt title="move residual = hidden_states below the norm"
+  good={`residual = hidden_states                       # ← the stream is saved
+hidden_states = self.input_layernorm(hidden_states)
+hidden_states = self.self_attn(hidden_states)
+hidden_states = residual + hidden_states`}
+  bad={`hidden_states = self.input_layernorm(hidden_states)
+residual = hidden_states                       # ← the normalized copy is saved
+hidden_states = self.self_attn(hidden_states)
+hidden_states = residual + hidden_states`}
+  result={(b) => b ? (
+    <div><StreamCompare show={["normal", "residual_after_norm"]} /><p className="small" style={{marginTop: 8}}>The stream is renormalized in every sub-block. What earlier layers wrote is erased together with its magnitude. The similarity to the embedding collapses to <b>0.2</b> within the first two layers. This is effectively the <b>post-norm</b> architecture (almost the same as the purple line).</p></div>
+  ) : (
+    <div><StreamCompare show={["normal"]} /><p className="small" style={{marginTop: 8}}>With the correct code the stream transforms the embedding's information gradually over the layers: the similarity drops from 1.0 to 0.84, the norm rises from 48 to 57.</p></div>
+  )}
+/>
+
+## Pre-norm vs post-norm
+
+The original Transformer (2017) used **post-norm**: add first, then normalize, <span className="mono">h ← norm(h + f(h))</span>. Gemma, Llama and SigLIP use **pre-norm**: <span className="mono">h ← h + f(norm(h))</span>.
+
+<Fig caption={<><b>Three architectures, the same toy model.</b> With pre-norm the stream keeps carrying the embedding. Post-norm and the "residual after the norm" bug rescale the stream at every step.</>}>
+<StreamCompare show={["normal", "residual_after_norm", "post_norm"]} />
+</Fig>
+
+<Callout kind="neden" title="Why did pre-norm win? The gradient path">
+With pre-norm the output contains the input <i>itself</i>: <span className="mono">h_L = h_0 + Σ f_i(…)</span>. Taking the derivative gives <span className="mono">∂h_L/∂h_0 = I + …</span>. There is a straight "identity" path from the loss to the embedding that passes through no norm and no layer. In an 18-layer (or even 46-layer) model the gradient arrives through it without vanishing. With post-norm that path has to pass through a norm in every layer, which is why deep post-norm models are hard to train without learning-rate warmup.
+</Callout>
+
+## How much do the layers write to the stream?
+
+<Fig caption={<><b>The size of the updates and the size of the stream.</b> Every branch produces updates of similar size from its normalized copy. The stream accumulates them and grows. In the toy model the MLP weights are random (std 0.02); in the real model the ratios differ but the structure is the same.</>}>
+<UpdateSizes />
+</Fig>
+
+<Predict q="The toy model on this page has a random Linear layer instead of self_attn. Why not the real GemmaAttention?" hint="What does the experiment measure?">
+The experiments measure the behavior of the <b>stream</b>: where the norms sit, where the residual is saved, ×√d. For that, what the branch computes does not matter; the only requirement is that it writes an update to the stream. A random Linear whose scale (std 0.02) we control is the simplest version of that. Real attention plugs in with the same two lines (norm, branch, ⊕), and we look at it in <Link to="/gemma/attention">4.11</Link>.
+</Predict>
+
+<Impact from="gemma.py: residual = hidden_states" to="Gemma 2: sandwich norm">
+Gemma 2 also adds a norm on each branch's <i>output</i>: <span className="mono">h + norm₂(f(norm₁(h)))</span>. The stream itself is still not normalized, and the highway idea stays the same. The only change is that the size of the update a branch writes to the stream is capped too.
+</Impact>
+
+<ManimVideo scene="ResidualHighway" caption="One token's vector over 18 layers: each branch reads, computes and adds to the stream." />

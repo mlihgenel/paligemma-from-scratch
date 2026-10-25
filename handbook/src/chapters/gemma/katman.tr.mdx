@@ -11,7 +11,7 @@ import { Link } from "react-router-dom";
 <p className="lead">Katmanın kendisi bir şey hesaplamıyor: dört alt modülü doğru sırayla çağırıp iki kez toplama yapıyor. İşin bütün inceliği sırada ve adlarda.</p>
 
 <CodeWalk file="gemma.py" symbol="GemmaDecoderLayer" notes={[
-  { match: "def __init__(self, config: GemmaConfig, layer_idx: int)", title: "layer_idx", text: <>Attention'a veriliyor ama şu an orada da kullanılmıyor. KV cache eklenince her katmanın K/V'sini bu numarayla saklayacak. Gemma 2'de katmanın sliding window mu global mi olduğuna da bu karar verecek: çift/tek katmanlar.</> },
+  { match: "def __init__(self, config: GemmaConfig, layer_idx: int)", title: "layer_idx", text: <>Attention'a veriliyor: KV cache her katmanın K/V'sini bu numarayla saklıyor (<Link to="/gemma/kv-cache">4.12</Link>). Gemma 2'de katmanın sliding window mu global mi olduğuna da bu karar veriyor: çift/tek katmanlar.</> },
   { match: "self.self_attn = GemmaAttention(config, layer_idx)", title: "attention", text: <>Ad <code>self_attn</code> olmak zorunda: HF anahtarları <code>layers.N.self_attn.q_proj.weight</code>. İçi <Link to="/gemma/attention">4.11</Link>'de.</> },
   { match: "self.mlp = GemmaMLP(config)", title: "mlp", text: <>Anahtarlar <code>layers.N.mlp.gate_proj.weight</code> vb.</> },
   { match: "self.input_layernorm = GemmaRMSNorm", title: "attention girişindeki norm", text: <>Ad Llama'dan geliyor. Bloğun <b>girdisini</b> normalize ediyor.</> },
@@ -75,7 +75,7 @@ hf.post_attention_layernorm.weight.normal_()
 
 ## Gemma 2'de ne değişecek?
 
-<Fig caption={<><b>Aynı ad, farklı yer.</b> Gemma 2'ye geçince ilk kontrol edeceğin şey her norm'un nereye uygulandığı.</>}>
+<Fig caption={<><b>Aynı ad, farklı yer.</b> Gemma 2'de ilk kontrol edilecek şey her norm'un nereye uygulandığı.</>}>
 <SandwichCompare />
 </Fig>
 

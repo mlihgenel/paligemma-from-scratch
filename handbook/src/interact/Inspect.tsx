@@ -1,4 +1,4 @@
-// Tek tip bilgi baloncuğu: bir kabın içinde, verilen noktanın yanında açılır ve kenarlara taşmaz.
+// A single tooltip style: opens next to a given point inside a container and does not overflow the edges.
 import { ReactNode, useLayoutEffect, useRef, useState } from "react";
 
 export function Inspect({ x, y, children, containerWidth }: { x: number; y: number; children: ReactNode; containerWidth?: number }) {

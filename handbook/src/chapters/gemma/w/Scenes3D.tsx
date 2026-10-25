@@ -1,16 +1,17 @@
-// R3: Bölüm 4'in 3D scrolly sahneleri. Hepsi interact/three (Stage3D + instanced Cubes) üzerinde.
-// Kural: her adımda tek bir şey hareket eder; geri kalanı yerinde ve soluk durur.
+// The 3D scrolly scenes of part 4. All built on interact/three (Stage3D + instanced Cubes).
+// Rule: only one thing moves per step; everything else stays in place, faded.
 import { ReactNode, useMemo } from "react";
 import * as THREE from "three";
 import { rng, geluTanh } from "../../../lib/tensor";
 import { Stage3D, Cubes, Cube, Tag, View, cssColor } from "../../../interact/three";
 import { valueColor } from "../../../interact/cells";
+import { useT } from "../../../i18n";
 
 const fx = (v: number, d = 3) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(d));
 const rmsOf = (a: number[]) => Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length);
 const vc = (v: number, max: number) => valueColor(v, max, document.documentElement.dataset.theme === "dark");
 
-/** Bir vektörü x konumunda, z ekseni boyunca dizilmiş işaretli çubuklar olarak çiz */
+/** Draw a vector at position x as signed bars along the z axis */
 function barItems(prefix: string, vals: number[], at: [number, number, number], color: string, k: number, opts: { hidden?: boolean; dim?: boolean; tip?: (i: number) => ReactNode } = {}): Cube[] {
   return vals.map((v, i) => {
     const h = Math.max(0.03, Math.abs(v) * k);
@@ -28,7 +29,7 @@ const HD = 10;
 const smooth = (x: number) => { const k = Math.min(1, Math.max(0, x)); return k * k * (3 - 2 * k); };
 const mix = (a: number[], b: number[], k: number) => a.map((v, i) => v + (b[i] - v) * k);
 
-// Yan yol: otoyoldan kalkıp norm ve f bloklarından geçen, ⊕'de otoyola inen eğri
+// The side road: a curve that leaves the highway, passes the norm and f blocks, and rejoins at ⊕
 const BR = [
   { from: -5.2, norm: -4.0, f: -2.2, add: -1.0, kind: "attn" as const },
   { from: 0.4, norm: 1.6, f: 3.4, add: 4.6, kind: "mlp" as const },
@@ -40,7 +41,7 @@ function branchCurve(b: (typeof BR)[number]) {
     new THREE.Vector3((b.norm + b.f) / 2, BY, 0), new THREE.Vector3(b.f, BY, 0), new THREE.Vector3(b.add - 0.55, 1.1, 0), new THREE.Vector3(b.add, 0.05, 0),
   ], false, "centripetal");
 }
-// eğri üzerinde norm bloğu ≈ 0.33, f bloğu ≈ 0.67
+// on the curve, the norm block is at ≈ 0.33 and the f block at ≈ 0.67
 const T_NORM = 0.33, T_F = 0.67;
 
 function Road({ curve, color, on }: { curve: THREE.Curve<THREE.Vector3>; color: string; on: boolean }) {
@@ -69,6 +70,7 @@ function AddNode({ x, on }: { x: number; on: boolean }) {
 }
 
 export function HighwayScene({ step, progress = 0 }: { step: number; progress?: number }) {
+  const tr = useT();
   const v = useMemo(() => {
     const r = rng(21);
     const h0 = Array.from({ length: HD }, () => r.normal() * 1.5);
@@ -85,10 +87,10 @@ export function HighwayScene({ step, progress = 0 }: { step: number; progress?: 
   const p = progress;
   const norm = (a: number[]) => { const r = rmsOf(a); return a.map((x) => x / r); };
 
-  // Her adımda paketlerin yeri ve değerleri, adım içi ilerlemeye (p) göre sürekli
-  // akış paketi
+  // Position and values of the packets at each step, continuous in the in-step progress (p)
+  // the stream packet
   let sx = -6.4, sv = v.h0;
-  // dal paketi: eğri üzerindeki konum (ct), değerleri (cv), rengi
+  // the branch packet: position on the curve (ct), values (cv), color
   let ct = -1, cv = v.h0, cCol = N, b = 0;
   if (step === 0) sx = -6.6 + 1.2 * smooth(p);
   else if (step === 1) { sx = -5.4; ct = T_NORM * smooth(p * 1.3); cv = mix(v.h0, norm(v.h0), smooth((p - 0.45) * 2.5)); }
@@ -111,11 +113,11 @@ export function HighwayScene({ step, progress = 0 }: { step: number; progress?: 
   const items: Cube[] = [];
   items.push({ id: "lane", pos: [0, -0.04, 0], size: [14.6, 0.05, 1.1], color: cssColor("--border-strong") });
   const sRms = rmsOf(sv);
-  items.push(...barItems("s", sv, [sx, 0, 0], T, K, { tip: (i) => <>akış h[{i}] = <b>{fx(sv[i])}</b><div className="muted">rms = {fx(sRms, 2)}</div></> }));
+  items.push(...barItems("s", sv, [sx, 0, 0], T, K, { tip: (i) => <>{tr("stream", "akış")} h[{i}] = <b>{fx(sv[i])}</b><div className="muted">rms = {fx(sRms, 2)}</div></> }));
   items.push(...barItems("c", cv, [cp.x, cp.y + 0.06, 0.25], cCol, K, { hidden: !onBranch, tip: (i) => <>dal paketi[{i}] = <b>{fx(cv[i])}</b><div className="muted">rms = {fx(rmsOf(cv), 2)}</div></> }));
 
   const live = (k: number) => (step >= 1 && step <= 3 && k === 0) || (step === 4 && k === 1);
-  // Kamera: dal adımlarında o dala, sonda bütün katmana
+  // Camera: on the branch during branch steps, on the whole layer at the end
   const cx = step <= 3 ? -3.4 : step === 4 ? 2.0 : 0.2;
   const view: View = step === 5 ? { pos: [0.6, 4.2, 12.4], target: [0.2, 0.8, 0] } : { pos: [cx + 0.3, 2.9, 6.9], target: [cx, 0.95, 0] };
   const label = (x: number, y: number, txt: ReactNode, color: string, on: boolean, z = 0) => <Tag position={[x, y, z]} color={color} size={on ? 12.5 : 11.5} weight={on ? 700 : 500}>{txt}</Tag>;
@@ -134,8 +136,8 @@ export function HighwayScene({ step, progress = 0 }: { step: number; progress?: 
         </group>
       ))}
       <Block x={endX} color={N} on={step === 5} w={1.2} />
-      {label(endX, BY + 0.45, "model.norm (18 katman sonra)", "var(--ax-hd)", step === 5)}
-      {label(-6.2, -0.5, "akış (hidden_states)", "var(--ax-T)", step === 0, 0.75)}
+      {label(endX, BY + 0.45, tr("model.norm (after 18 layers)", "model.norm (18 katman sonra)"), "var(--ax-hd)", step === 5)}
+      {label(-6.2, -0.5, tr("stream (hidden_states)", "akış (hidden_states)"), "var(--ax-T)", step === 0, 0.75)}
     </Stage3D>
   );
 }
@@ -143,6 +145,7 @@ export function HighwayScene({ step, progress = 0 }: { step: number; progress?: 
 /* ------------------------------------------------------------------ 5.4 GeGLU */
 const MT = 3, MD = 4, MI = 8;
 export function MlpScene({ step }: { step: number }) {
+  const tr = useT();
   const v = useMemo(() => {
     const r = rng(5);
     const x = Array.from({ length: MT }, () => Array.from({ length: MD }, () => r.normal()));
@@ -165,22 +168,22 @@ export function MlpScene({ step }: { step: number }) {
   const maxG = 3, maxH = 3;
   for (let t = 0; t < MT; t++) for (let d = 0; d < MD; d++) {
     items.push({ id: `x${t}${d}`, pos: grid(P.x, 0, MT, MD, t, d), color: vc(v.x[t][d], 2.5), dim: step >= 2 && step < 4,
-      tip: () => <>x[t={t}, d={d}] = <b>{fx(v.x[t][d])}</b><div className="muted">[T, D] = [3, 4] (gerçekte [T, 2048])</div></> });
+      tip: () => <>x[t={t}, d={d}] = <b>{fx(v.x[t][d])}</b><div className="muted">[T, D] = [3, 4] ({tr("[T, 2048] in reality", "gerçekte [T, 2048]")})</div></> });
     items.push({ id: `o${t}${d}`, pos: step >= 4 ? grid(P.o, 0, MT, MD, t, d) : grid(P.h, 0, MT, MI, t, d * 2), color: vc(v.o[t][d], 3), hidden: step < 4,
-      tip: () => <>çıkış[t={t}, d={d}] = Σᵢ down[d,i] · h[t,i] = <b>{fx(v.o[t][d])}</b></> });
+      tip: () => <>{tr("out", "çıkış")}[t={t}, d={d}] = Σᵢ down[d,i] · h[t,i] = <b>{fx(v.o[t][d])}</b></> });
   }
   for (let t = 0; t < MT; t++) for (let i = 0; i < MI; i++) {
     const g = v.g[t][i], a = v.act[t][i], u = v.u[t][i], h = v.h[t][i];
     const closed = Math.abs(a) < 0.12;
     const gPos = step >= 3 ? grid(P.h, 0, MT, MI, t, i) : step === 2 ? grid(P.act, Y.top, MT, MI, t, i) : step >= 1 ? grid(P.gate, Y.top, MT, MI, t, i) : grid(P.x, 0, MT, MD, t, Math.min(MD - 1, i >> 1));
     items.push({ id: `g${t}${i}`, pos: gPos, color: step >= 2 ? (closed ? cssColor("--border-strong") : vc(a, maxG)) : vc(g, maxG), hidden: step < 1 || step >= 3,
-      tip: () => step >= 2 ? <>gelu_tanh(gate) = gelu({fx(g)}) = <b>{fx(a)}</b><div className="muted">{closed ? "≈ 0 → kapı KAPALI" : "kapı açık"}</div></> : <>gate[t={t}, i={i}] = <b>{fx(g)}</b></> });
+      tip: () => step >= 2 ? <>gelu_tanh(gate) = gelu({fx(g)}) = <b>{fx(a)}</b><div className="muted">{closed ? tr("≈ 0 → gate CLOSED", "≈ 0 → kapı KAPALI") : tr("gate open", "kapı açık")}</div></> : <>gate[t={t}, i={i}] = <b>{fx(g)}</b></> });
     items.push({ id: `u${t}${i}`, pos: step >= 3 ? grid(P.h, 0, MT, MI, t, i) : step >= 1 ? grid(P.up, Y.bot, MT, MI, t, i) : grid(P.x, 0, MT, MD, t, Math.min(MD - 1, i >> 1)), color: vc(u, maxG), hidden: step < 1 || step >= 3, dim: step === 2,
-      tip: () => <>up[t={t}, i={i}] = <b>{fx(u)}</b><div className="muted">aktivasyon yok: "ne geçsin"</div></> });
+      tip: () => <>up[t={t}, i={i}] = <b>{fx(u)}</b><div className="muted">{tr("no activation: \"what passes\"", "aktivasyon yok: \"ne geçsin\"")}</div></> });
     items.push({ id: `h${t}${i}`, pos: grid(P.h, 0, MT, MI, t, i), color: Math.abs(h) < 0.05 ? cssColor("--border-strong") : vc(h, maxH), hidden: step < 3, dim: step >= 4,
-      tip: () => <>h = gelu(gate) ⊙ up = {fx(a)} × {fx(u)} = <b>{fx(h)}</b>{closed && <div className="muted">kapı kapalı: up ne olursa olsun ≈ 0</div>}</> });
+      tip: () => <>h = gelu(gate) ⊙ up = {fx(a)} × {fx(u)} = <b>{fx(h)}</b>{closed && <div className="muted">{tr("gate closed: ≈ 0 whatever up is", "kapı kapalı: up ne olursa olsun ≈ 0")}</div>}</> });
   }
-  // ağırlık levhaları
+  // weight plates
   const plate = (id: string, x: number, y: number, label: string, on: boolean, col: string) => items.push({ id, pos: [x, y, -0.5], size: [0.08, MT * gp + 0.6, 1.1], color: col, hidden: !on });
   plate("Wg", (P.x + P.gate) / 2 + 0.4, Y.top, "gate", step >= 1, cssColor("--ax-hd"));
   plate("Wu", (P.x + P.up) / 2 + 0.4, Y.bot, "up", step >= 1, cssColor("--ax-D"));
@@ -198,7 +201,7 @@ export function MlpScene({ step }: { step: number }) {
       <Tag position={[P.x, 0.95, 0]} color="var(--ax-T)">x <span className="mono" style={{ color: "var(--fg-muted)" }}>[T, D]</span></Tag>
       {step >= 1 && <Tag position={[P.gate, Y.top + 0.95, 0]} color="var(--ax-hd)">gate_proj(x) <span className="mono" style={{ color: "var(--fg-muted)" }}>[T, I]</span></Tag>}
       {step >= 1 && <Tag position={[P.up, Y.bot - 0.95, 0]} color="var(--ax-D)">up_proj(x) <span className="mono" style={{ color: "var(--fg-muted)" }}>[T, I]</span></Tag>}
-      {step === 2 && <Tag position={[P.act, Y.top + 0.95, 0]} color="var(--accent)">gelu_tanh(gate) · gri = kapalı</Tag>}
+      {step === 2 && <Tag position={[P.act, Y.top + 0.95, 0]} color="var(--accent)">gelu_tanh(gate) · {tr("gray = closed", "gri = kapalı")}</Tag>}
       {step >= 3 && <Tag position={[P.h, 0.95, 0]} color="var(--ax-I)">h = gelu(gate) ⊙ up</Tag>}
       {step >= 4 && <Tag position={[P.o, 0.95, 0]} color="var(--ax-T)">down_proj(h) <span className="mono" style={{ color: "var(--fg-muted)" }}>[T, D]</span></Tag>}
     </Stage3D>
@@ -208,10 +211,11 @@ export function MlpScene({ step }: { step: number }) {
 /* ------------------------------------------------------------------ 5.7 Weight tying */
 const TV = 10, TDim = 6, LOOK = 3;
 export function TyingScene({ step }: { step: number }) {
+  const tr = useT();
   const v = useMemo(() => {
     const r = rng(13);
     const E = Array.from({ length: TV }, () => Array.from({ length: TDim }, () => r.normal()));
-    const h = E[6].map((a) => a * 1.3 + r.normal() * 0.4);   // 6. satıra benzeyen bir gizli durum
+    const h = E[6].map((a) => a * 1.3 + r.normal() * 0.4);   // a hidden state similar to row 6
     const logits = E.map((row) => row.reduce((s, e, j) => s + e * h[j], 0));
     return { E, h, logits, best: logits.indexOf(Math.max(...logits)) };
   }, []);
@@ -222,16 +226,16 @@ export function TyingScene({ step }: { step: number }) {
   for (let r = 0; r < TV; r++) for (let c = 0; c < TDim; c++) {
     const e = v.E[r][c];
     const hl = (step === 1 && r === LOOK) || (step >= 2 && r === v.best);
-    items.push({ id: `E${r}${c}`, pos: pos(r, c), color: vc(e, 2.2), dim: (step === 1 && r !== LOOK), tip: () => <>W[{r}, {c}] = <b>{fx(e)}</b><div className="muted">aynı sayı: embed_tokens.weight ve lm_head.weight</div></> });
+    items.push({ id: `E${r}${c}`, pos: pos(r, c), color: vc(e, 2.2), dim: (step === 1 && r !== LOOK), tip: () => <>W[{r}, {c}] = <b>{fx(e)}</b><div className="muted">{tr("the same number: embed_tokens.weight and lm_head.weight", "aynı sayı: embed_tokens.weight ve lm_head.weight")}</div></> });
     if (hl) items[items.length - 1].color = vc(e, 2.2);
   }
-  // lookup: satırın kopyası sola uçuyor
+  // lookup: a copy of the row flies to the left
   for (let c = 0; c < TDim; c++) {
     const p = pos(LOOK, c);
     items.push({ id: `L${c}`, pos: step >= 1 ? [p[0] - 3.6, p[1], 0] : p, color: vc(v.E[LOOK][c], 2.2), hidden: step < 1,
       tip: () => <>embed_tokens(id={LOOK})[{c}] = W[{LOOK}, {c}] = <b>{fx(v.E[LOOK][c])}</b></> });
   }
-  // çıkış: h vektörü üstte, logit çubukları sağda
+  // output: the h vector on top, logit bars on the right
   for (let c = 0; c < TDim; c++) {
     const p = pos(0, c);
     items.push({ id: `H${c}`, pos: [p[0], p[1] + 0.9, 0], color: cssColor("--ax-D"), hidden: step < 2, tip: () => <>norm(h)[{c}] = <b>{fx(v.h[c])}</b></> });
@@ -242,7 +246,7 @@ export function TyingScene({ step }: { step: number }) {
     const w = Math.max(0.04, (Math.abs(L) / maxL) * 1.8);
     const p = pos(r, TDim - 1);
     items.push({ id: `G${r}`, pos: step >= 2 ? [p[0] + 0.5 + w / 2, p[1], 0] : [p[0] + 0.5, p[1], 0], size: [w, g * 0.8, 0.2], color: r === v.best ? accent : L >= 0 ? cssColor("--ax-V") : cssColor("--fg-faint"), hidden: step < 2,
-      tip: () => <>logit[{r}] = Σ h·W[{r}] = <b>{fx(L)}</b>{r === v.best && <div className="muted">en büyük: argmax → token {r}</div>}</> });
+      tip: () => <>logit[{r}] = Σ h·W[{r}] = <b>{fx(L)}</b>{r === v.best && <div className="muted">{tr("largest: argmax → token", "en büyük: argmax → token")} {r}</div>}</> });
   }
   const views: View[] = [
     { pos: [0.6, 0.6, 6.0], target: [0, 0, 0] },
@@ -256,8 +260,8 @@ export function TyingScene({ step }: { step: number }) {
       <Cubes items={items} cell={g * 0.88} />
       <Tag position={[0, -top - 0.45, 0]} color="var(--ax-V)" size={12}>W <span className="mono">[V, D]</span> · embed_tokens.weight <b>is</b> lm_head.weight</Tag>
       <Tag position={[-((TDim - 1) / 2) * g - 0.55, 0, 0]} color="var(--ax-V)">V ↓</Tag>
-      {step >= 1 && <Tag position={[-3.6, pos(LOOK, 0)[1] + 0.4, 0]} color="var(--ax-T)">girişte: id = {LOOK} → satır {LOOK}</Tag>}
-      {step >= 2 && <Tag position={[0, top + 1.35, 0]} color="var(--ax-D)">çıkışta: norm(h) · Wᵀ → logit</Tag>}
+      {step >= 1 && <Tag position={[-3.6, pos(LOOK, 0)[1] + 0.4, 0]} color="var(--ax-T)">{tr("input", "girişte")}: id = {LOOK} → {tr("row", "satır")} {LOOK}</Tag>}
+      {step >= 2 && <Tag position={[0, top + 1.35, 0]} color="var(--ax-D)">{tr("output", "çıkışta")}: norm(h) · Wᵀ → logit</Tag>}
       {step >= 2 && <Tag position={[((TDim - 1) / 2) * g + 1.6, top + 0.4, 0]} color="var(--fg-muted)">logits <span className="mono">[V]</span></Tag>}
     </Stage3D>
   );

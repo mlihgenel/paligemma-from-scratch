@@ -1,5 +1,5 @@
-// Kitaptaki interaktif hesaplar için küçük tensör yardımcıları. Vektörler düz number[].
-// Hepsi src/tests altında PyTorch altın değerleriyle karşılaştırılıyor.
+// Small tensor helpers for the book's interactive math. Vectors are plain number[].
+// All of them are checked against PyTorch golden values under src/tests.
 import { fround, toBf16 } from "./bf16";
 
 export type Vec = number[];
@@ -16,7 +16,7 @@ export const std = (v: Vec) => {
   return Math.sqrt(mean(v.map((x) => (x - m) ** 2)));
 };
 
-/** float32 aritmetiğiyle mean(x²): her adımı Math.fround ile float32'ye yuvarlar */
+/** mean(x²) in float32 arithmetic: every step is rounded to float32 with Math.fround */
 function meanSqF32(v: Vec): number {
   let s = 0;
   for (const x of v) s = fround(s + fround(x * x));
@@ -38,7 +38,7 @@ export function rmsnormSteps(x: Vec, w: Vec, eps = 1e-6, dtype: DType = "f32", o
   const sq = xf.map((v) => fround(v * v));
   const meanSq = meanSqF32(xf);
   const plusEps = fround(meanSq + eps);
-  const r = fround(1 / fround(Math.sqrt(plusEps)));   // torch.rsqrt CPU: float32 sqrt, sonra 1/x
+  const r = fround(1 / fround(Math.sqrt(plusEps)));   // torch.rsqrt on CPU: float32 sqrt, then 1/x
   const normed = xf.map((v) => fround(v * r));
   const scale = w.map((v) => fround(1 + fround(v)));
   let out: Vec;
@@ -60,7 +60,7 @@ export function layernorm(x: Vec, eps = 1e-6, gamma?: Vec, beta?: Vec): Vec {
 const SQRT_2_OVER_PI = Math.sqrt(2 / Math.PI);
 export const geluTanh = (x: number) => 0.5 * x * (1 + Math.tanh(SQRT_2_OVER_PI * (x + 0.044715 * x ** 3)));
 
-// Abramowitz-Stegun 7.1.26 yeterince hassas değil; erf için seri/sürekli kesir birleşimi
+// Abramowitz-Stegun 7.1.26 is not precise enough; erf uses a series / continued-fraction combination
 export function erf(x: number): number {
   const s = Math.sign(x);
   const a = Math.abs(x);
@@ -73,7 +73,7 @@ export function erf(x: number): number {
     }
     return (s * 2 * total) / Math.sqrt(Math.PI);
   }
-  // Büyük |x| için asimptotik erfc açılımı
+  // asymptotic erfc expansion for large |x|
   let t = 1, sumv = 1;
   for (let n = 1; n < 8; n++) {
     t *= -(2 * n - 1) / (2 * a * a);
@@ -98,7 +98,7 @@ export const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
 /** y = W x, W: [out][in] */
 export const matvec = (W: Vec[], x: Vec): Vec => W.map((row) => dot(row, x));
 
-/** Tekrarlanabilir rastgele sayılar (mulberry32) */
+/** Reproducible random numbers (mulberry32) */
 export function rng(seed: number) {
   let a = seed >>> 0;
   const next = () => {
@@ -127,7 +127,7 @@ export function histogram(v: ArrayLike<number>, bins: number, lo?: number, hi?: 
   return { counts, lo: a, hi: b, width: w };
 }
 
-/** Sayıyı okunur biçimde: 2753597168 -> "2.75 B" */
+/** A number in readable form: 2753597168 -> "2.75 B" */
 export function fmtCount(n: number): string {
   if (n >= 1e9) return (n / 1e9).toFixed(2) + " B";
   if (n >= 1e6) return (n / 1e6).toFixed(1) + " M";

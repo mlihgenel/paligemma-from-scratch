@@ -1,6 +1,7 @@
-// d3 tabanlı küçük grafikler: çizgi, histogram, ısı haritası (canvas), çubuk.
+// Small d3-based charts: line, histogram, heatmap (canvas), bars.
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
+import { useT } from "../i18n";
 
 export function useWidth<T extends HTMLElement>(): [React.RefObject<T>, number] {
   const ref = useRef<T>(null);
@@ -107,6 +108,7 @@ export function Histogram({ values, bins = 50, height = 180, color = "var(--acce
   values: ArrayLike<number>; bins?: number; height?: number; color?: string; domain?: [number, number];
   marks?: { x: number; label: string; color?: string }[]; xLabel?: string; overlay?: { values: ArrayLike<number>; color: string; label: string };
 }) {
+  const t = useT();
   const [ref, w] = useWidth<HTMLDivElement>();
   const ext = domain ?? (d3.extent(Array.from(values)) as [number, number]);
   const x = d3.scaleLinear().domain(ext).nice().range([M.l, w - M.r]);
@@ -131,7 +133,7 @@ export function Histogram({ values, bins = 50, height = 180, color = "var(--acce
       </svg>
       {overlay && (
         <div className="row small" style={{ gap: 14 }}>
-          <span><span style={{ color }}>■</span> önce</span><span><span style={{ color: overlay.color }}>■</span> {overlay.label}</span>
+          <span><span style={{ color }}>■</span> {t("before", "önce")}</span><span><span style={{ color: overlay.color }}>■</span> {overlay.label}</span>
         </div>
       )}
     </div>
@@ -196,7 +198,7 @@ export function Heatmap({ values, rows, cols, height, diverging = false, domain,
   );
 }
 
-/** Yatay çubuklar: {label, value, color} */
+/** Horizontal bars: {label, value, color} */
 export function Bars({ items, fmt = fmtTick, max }: { items: { label: ReactNode; value: number; color?: string; note?: ReactNode }[]; fmt?: (v: number) => string; max?: number }) {
   const m = max ?? Math.max(...items.map((i) => Math.abs(i.value)));
   return (

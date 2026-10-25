@@ -1,0 +1,110 @@
+import { Callout, Fig, Predict, S, Impact, ConceptQ } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { RopeDial, RopeFreqs, RopeScoreCurve, PairLayout, Bf16Angle } from "./w/Rope";
+import { Link } from "react-router-dom";
+
+# RoPE: position by rotation
+
+<p className="lead">Attention gives tokens no <b>order</b>: a shuffled sequence produces the same scores. To know positions, information has to enter from somewhere. Gemma does not add anything to the embedding. It <b>rotates</b> the Q and K vectors according to their positions.</p>
+
+## The idea: let position be an angle
+
+In SigLIP, position was a learned vector from a table that was <i>added</i> to the patch embeddings (<Link to="/patches">2.2</Link>). RoPE (rotary position embedding) works differently: it splits the <code>head_dim</code> vector of Q and K into pairs and rotates each pair in its own 2D plane by **position × θ**.
+
+$$
+\begin{pmatrix} a' \\ b' \end{pmatrix}
+=
+\begin{pmatrix} \cos m\theta & -\sin m\theta \\ \sin m\theta & \cos m\theta \end{pmatrix}
+\begin{pmatrix} a \\ b \end{pmatrix}
+$$
+
+Below is a single pair: <i>q</i> at position m, <i>k</i> at position n. Play with the sliders. Then press "shift both +1" and watch the dot product.
+
+<Fig wide caption={<><b>One pair rotating.</b> Every pair has its own speed θ: pair 0 turns 1 radian per position, pair 100 about 0.0007 radians. The arrows rotate, but the angle between them, and therefore <span className="mono">q · k</span>, only depends on <span className="mono">m − n</span>.</>}>
+<RopeDial />
+</Fig>
+
+The reason is that the two rotations partly cancel each other:
+
+$$
+(R_{m\theta}\, q)\cdot(R_{n\theta}\, k) \;=\; q^\top R_{m\theta}^\top R_{n\theta}\, k \;=\; q^\top R_{(n-m)\theta}\, k
+$$
+
+The score depends on the **difference** of the positions, not on the positions themselves. "Three tokens back" means the same thing wherever it happens in the sequence.
+
+## 128 pairs, 128 speeds
+
+`head_dim = 256`, so 128 pairs. Pair <span className="mono">i</span> turns at <span className="mono">θᵢ = 10000^(−2i/256)</span>: the first pairs are fast, the last ones very slow. The frequencies below come from the project's `GemmaRotaryEmbedding` class.
+
+<Fig caption={<><b>Fast pairs separate nearby positions, slow pairs distant ones.</b> Pair 0 completes a turn about every 6 tokens. Pair 127 takes more than 50 thousand tokens. Like the hands of a clock: the second hand shows the recent past, the hour hand the distant past.</>}>
+<RopeFreqs />
+</Fig>
+
+<Fig caption={<><b>How the score depends on the position difference.</b> q and k have equal length and start in the same direction (the best case). Fast pairs die out quickly, slow pairs carry information over long distances. Below, measured with the project's code: four different position pairs with a difference of 5 give <b>the same score</b>.</>}>
+<RopeScoreCurve />
+</Fig>
+
+## Where is it in the code?
+
+There are three pieces, all at the top of `gemma.py`. The first only produces the cos/sin **table**; it does not touch Q or K.
+
+<CodeWalk file="gemma.py" symbol="GemmaRotaryEmbedding" notes={[
+  { match: "self.base = base", title: "base = 10000", text: <><code>rope_theta</code> from the config. It sets how quickly the frequencies slow down. Gemma 1 and 2 use the same value.</> },
+  { match: "inv_freq = 1.0 / (self.base", title: "frequencies", text: <><S s="head_dim/2" ax="hd" /> = 128 numbers, <span className="mono">θᵢ = base^(−2i/head_dim)</span>. <code>arange(0, dim, 2)</code> gives twice the pair index.</> },
+  { match: "self.register_buffer", title: "a buffer, not a parameter", text: <>Not learned, fixed. With <code>persistent=False</code> it stays out of the <code>state_dict</code> too: the checkpoint has no such key, so loading does not report a "missing key".</> },
+  { match: "def forward(self, x", title: "x only for dtype and device", text: <>The table does not use the values of <code>x</code>. It is only taken to convert the output to its dtype and device.</> },
+  { match: "freqs = position_ids[..., None].float()", title: "angle = position × θ, float32", text: <><S s="B, T, 1" /> × <S s="head_dim/2" ax="hd" /> → <S s="B, T, head_dim/2" ax="B,T,hd" />. <b>In float32</b>: for large positions like 8000, bf16 shifts the angle. The experiment below shows it.</> },
+  { match: "emb = torch.cat((freqs, freqs), dim=-1)", title: "the same angle twice", text: <>Pairs are matched as <code>(i, i + head_dim/2)</code>, so the second half needs the same angles. The shape becomes <S s="B, T, head_dim" ax="B,T,hd" />.</> },
+  { match: "return emb.cos().to(x.dtype)", title: "cos and sin", text: <>Two tables. Every layer uses the same ones, so <code>GemmaModel</code> computes them once and passes them to the layers (<Link to="/gemma/attention">4.11</Link>).</> },
+]} />
+
+The second and third pieces apply the table to Q and K:
+
+<CodeWalk file="gemma.py" symbol="rotate_half" notes={[
+  { match: "x1 = x[..., : x.shape[-1] // 2]", title: "first half", text: <>The first half of the vector: dims 0 … 127.</> },
+  { match: "x2 = x[..., x.shape[-1] // 2 :]", title: "second half", text: <>The second half: dims 128 … 255.</> },
+  { match: "return torch.cat((-x2, x1), dim=-1)", title: "[−x₂, x₁]", text: <>In a 2D rotation, the pair <span className="mono">(a, b)</span> turned by 90° is <span className="mono">(−b, a)</span>. Here <span className="mono">a = x₁</span>, <span className="mono">b = x₂</span>, for all 128 pairs at once.</> },
+]} />
+
+<CodeWalk file="gemma.py" symbol="apply_rotary_pos_emb" notes={[
+  { match: "cos = cos.unsqueeze(1)", title: "head axis", text: <><S s="B, T, hd" ax="B,T,hd" /> → <S s="B, 1, T, hd" ax="B,H,T,hd" />. Every head rotates by the same angle at the same position, so the table is shared across heads.</> },
+  { match: "q_embed = (q * cos) + (rotate_half(q) * sin)", title: "the rotation formula", text: <><span className="mono">x cos θ + rotate_half(x) sin θ</span>: <span className="mono">(a, b) → (a cos − b sin, b cos + a sin)</span> for every pair at once. Q and K rotate with the same formula.</> },
+]} />
+
+## Which dims form a pair?
+
+In the paper the pairs are neighboring dims: <span className="mono">(0, 1), (2, 3), …</span>. In HF and in this project's code the pairs are <b>first half with second half</b>: <span className="mono">(0, 128), (1, 129), …</span>. Both describe the same rotation; they only change the order in which the dims are laid out. But Gemma's weights were trained for the <b>half/half layout</b>. Pick the wrong layout and nothing raises; the result just breaks silently.
+
+<Fig wide caption={<><b>The same rotation, two layouts.</b> If you reorder the dims (adjacent pair → half/half), the two methods give exactly the same result. If you apply both to the raw vector without reordering, different pairs rotate and the results differ. Measured with the project's <code>apply_rotary_pos_emb</code>.</>}>
+<PairLayout />
+</Fig>
+
+## Positions in bf16
+
+The model runs in bf16, but the angles are computed in float32. The reason: bf16 has 7 mantissa bits, so it cannot represent large integers exactly.
+
+<Fig caption={<><b>What happens to a position converted to bf16?</b> Up to 256 every position is exact. After that the step doubles with every doubling: steps of 2 after 256, steps of 32 after 4096. Pair 0 turns 1 radian per position, so every unit of error in the position is one radian of error in the angle.</>}>
+<Bf16Angle />
+</Fig>
+
+<Callout kind="dikkat" title="Keep float32">
+That is why the line <code>position_ids[..., None].float()</code> is there. Only the angle is in float32. After cos and sin are computed they go back to the dtype of Q/K (the <code>.to(x.dtype)</code> on the last line).
+</Callout>
+
+## Concept questions
+
+<ConceptQ n={1} q="Why is RoPE applied to Q and K instead of being added to the embedding? Why not to V?">
+Position has to show up in the <b>score</b>, and the score is <span className="mono">q · k</span>. A position added to the embedding gets mixed with other information over the layers, fades, and has to be reminded in every layer. With Q and K rotated, position enters the score directly in every attention of every layer. <b>V</b> describes "what it carries": it is mixed as content in the weighted sum. Rotating it would distort the output according to the position of the token it looked at.
+</ConceptQ>
+
+<ConceptQ n={2} q="Why does the score between two tokens depend only on their position difference?">
+Because <span className="mono">R(mθ)ᵀ R(nθ) = R((n − m)θ)</span>: the product of the two rotations is the rotation of the difference. That is why the dot product does not change when you shift both sliders together above.
+</ConceptQ>
+
+<Predict q="The KV cache stores a token's K. Should K be stored before or after RoPE?" hint="When token 260 is generated, are the earlier tokens' K's recomputed?">
+<b>After</b>. The rotated K is stored, because each token is rotated once at its own position and never changes again. When a new token is generated, only its Q and K are rotated, with <b>its own position</b> (<code>position_ids</code> = 260), and the old K's are left alone. That is why <code>position_ids</code> is a separate argument of <code>GemmaModel</code>: the table does not always start at 0. See <Link to="/gemma/kv-cache">4.12</Link>.
+</Predict>
+
+<Impact from="gemma.py: GemmaRotaryEmbedding(head_dim, base)" to="GemmaAttention.forward: apply_rotary_pos_emb(q, k, cos, sin)">
+Gemma 2 uses the same RoPE. The differences are elsewhere: the scale comes from <code>query_pre_attn_scalar</code> in the config instead of <code>head_dim</code>, the scores are soft-capped, and half of the layers have a window limit. The next pages cover <Link to="/gemma/attention">attention as a whole</Link>.
+</Impact>

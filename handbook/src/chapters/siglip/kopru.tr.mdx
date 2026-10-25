@@ -27,7 +27,7 @@ import { Link } from "react-router-dom";
   { match: "return_data = {\"pixel_values\": pixel_values, **inputs}", title: "çıktı", text: <><code>pixel_values</code> <S s="1, 3, 224, 224" ax="B,C,," />, <code>input_ids</code> ve <code>attention_mask</code> <S s="1, T" ax="B,T" />.</> },
 ]} />
 
-<Note label="Tokenizer">Tokenizer'ı yeniden yazmadık: Gemma'nın SentencePiece modeli, 257216 parçalık sözlük. Hafta 9'daki BPE ile aynı aile.</Note>
+<Note label="Tokenizer">Tokenizer'ı yeniden yazmadık: Gemma'nın SentencePiece modeli, 257216 parçalık sözlük. BPE ile aynı aile.</Note>
 
 ## 2. Projektör: tek bir Linear
 
@@ -40,14 +40,14 @@ import { Link } from "react-router-dom";
 <ProjectorStats />
 </Fig>
 
-<a id="birlestirme" />
+<a id="merge" />
 
 ## 3. Birleştirme: iki kaynak, tek dizi
 
 Gemma'nın gördüğü dizinin her konumu iki kaynaktan birinden geliyor: metin token'ları embedding **tablosundan**, görsel token'lar **projektörden**. `_merge_input_ids_with_image_features` bu ikisini dikiyor. Küçük bir örnekle (T = 10, D = 4) adım adım:
 
 <Scrolly label="_merge_input_ids_with_image_features" figure={(s) => <MergeScatter step={s} />}>
-<Step>**`input_ids`**: processor'dan gelen 10 id. Görsel konumlarda `<image>` = 257152 yer tutucusu var. Gösterim için sona 2 `<pad>` koyduk (senin modelin şimdilik padding'i reddediyor).</Step>
+<Step>**`input_ids`**: processor'dan gelen 10 id. Görsel konumlarda `<image>` = 257152 yer tutucusu var. Gösterim için sona 2 `<pad>` koyduk (projenin modeli şimdilik padding'i reddediyor).</Step>
 <Step>**`inputs_embeds`**: önce **bütün** id'ler embedding tablosundan geçiyor, `<image>` da dahil. O sütunların değerleri birazdan atılacak. Gerçek checkpoint'te `<image>` satırının normu ≈ 7.3, ama hiç kullanılmıyor. Metin satırları bu noktada √d ile çarpılıyor (<Link to="/gemma/sqrt-d">4.3</Link>).</Step>
 <Step>**Üç maske**, her biri <S s="B, T" />: metin, görüntü, pad. Birbirlerini dışlıyorlar ve birlikte bütün diziyi kaplıyorlar.</Step>
 <Step>**`unsqueeze(-1).expand`**: <S s="B, T" /> → <S s="B, T, 1" /> → <S s="B, T, D" />. Her maske hücresi D alt hücreye bölündü. `expand` bellek kopyalamıyor, aynı değeri D boyunca görünüm olarak tekrarlıyor.</Step>
@@ -67,7 +67,7 @@ Gemma'nın gördüğü dizinin her konumu iki kaynaktan birinden geliyor: metin 
 ]} />
 
 <Predict q="Prompt'ta <image> token'ı 256 değil 255 olsaydı ne olurdu?">
-<code>masked_scatter</code> kaynağın ilk 255 × 2048 elemanını kullanır ve <b>hata vermez</b>: son görsel vektör sessizce atılır. 257 olsaydı kaynak yetmez ve hata alırdın. HF'nin yeni sürümü bu yüzden <code>get_placeholder_mask</code>'ta sayıları karşılaştırıp hata veriyor. Senin kodunda bu kontrol yok. Processor doğru olduğu sürece sorun değil.
+<code>masked_scatter</code> kaynağın ilk 255 × 2048 elemanını kullanır ve <b>hata vermez</b>: son görsel vektör sessizce atılır. 257 olsaydı kaynak yetmez ve hata alırdın. HF'nin yeni sürümü bu yüzden <code>get_placeholder_mask</code>'ta sayıları karşılaştırıp hata veriyor. Bu projenin kodunda bu kontrol yok. Processor doğru olduğu sürece sorun değil.
 </Predict>
 
 ## 4. Hepsi bir arada: forward
@@ -83,7 +83,7 @@ Gemma'nın gördüğü dizinin her konumu iki kaynaktan birinden geliyor: metin 
   { match: "logits = self.language_model(inputs_embeds", title: "7. Gemma", text: <><S s="B, T, 2048" ax="B,T,D" /> → <S s="B, T, 257216" ax="B,T,V" />, float32. Maske ve konumlar burada katmanlara iniyor. <code>scale_embeddings=False</code>: metin birleştirme sırasında zaten ×√d yapıldı, <code>GemmaModel</code> tekrar çarpmıyor. Bölüm 4'ün konusu.</> },
 ]} />
 
-<Fig caption={<><b>Gerçek boyutlu forward.</b> Şekiller senin modelinin meta cihazındaki gerçek çalışmasından ("caption tr", T = 260).</>}>
+<Fig caption={<><b>Gerçek boyutlu forward.</b> Şekiller projenin modelinin meta cihazındaki gerçek çalışmasından ("caption tr", T = 260).</>}>
 <ShapeTrace start={{ shape: "1, 3, 224, 224", ax: "B,C,,", label: "pixel_values" }} steps={[
   { op: "patch_embedding", code: "Conv2d(3, 1152, 14, 14)", shape: "1, 1152, 16, 16", ax: "B,D,," },
   { op: "flatten(2) + transpose(1, 2)", shape: "1, 256, 1152", ax: "B,T,D" },
@@ -109,10 +109,10 @@ Dizi artık tek parça, ama görüntüyle metni gerçekten **konuşturan** şey 
 PaliGemma makalesi (§5.2): görsel token'ların prompt'u, yani "ne sorulduğunu" görebilmesi, görüntü temsilini göreve göre şekillendiriyor. Tam causal maskede ilk görsel token hiçbir şey göremez, son görsel token ise prompt'u göremez. Prefix'in kendisi zaten verili, gelecekten bilgi sızdırma riski yok. Causal kısıt sadece modelin <i>üreteceği</i> kısım için gerekli.
 </Callout>
 
-<Note label="Kodda">Maskeyi <code>make_prefix_lm_mask(total_len, prefix_len, …)</code> kuruyor, kural tek satır: <b><code>i</code>, <code>j</code>'ye bakabilir ⇔ <code>j &lt; prefix_len</code> veya <code>j ≤ i</code></b>. Önce nedensel maske, sonra <code>mask[:, :prefix_len] = 0</code> ile prefix sütunları açılıyor. <code>PaliGemma.forward</code> bunu kurup <code>GemmaModel</code>'e iletiyor. <code>GemmaModel</code> maske verilmezse nedensel kuruyor (<Link to="/gemma/attention">4.11</Link>). Üretimde (<code>generate.py</code>) girdiye cevap token'ları eklenirken <code>prefix_len</code> ilk komutun uzunluğunda sabit kalıyor.</Note>
+<Note label="Kodda">Maskeyi <code>make_prefix_lm_mask(total_len, prefix_len, …)</code> kuruyor, kural tek satır: <b><code>i</code>, <code>j</code>'ye bakabilir ⇔ <code>j &lt; prefix_len</code> veya <code>j ≤ i</code></b>. Önce nedensel maske, sonra <code>mask[:, :prefix_len] = 0</code> ile prefix sütunları açılıyor. <code>PaliGemma.forward</code> bunu kurup <code>GemmaModel</code>'e iletiyor. <code>GemmaModel</code> maske verilmezse nedensel kuruyor (<Link to="/gemma/attention">4.11</Link>). Cache'siz üretimde girdiye cevap token'ları eklenirken <code>prefix_len</code> ilk komutun uzunluğunda sabit kalıyor. KV cache'le üretimde ise prefix bir kez işleniyor (<Link to="/gemma/kv-cache">4.12</Link>).</Note>
 
 <Callout kind="dikkat" title="HF'de prefix her zaman iki yönlü değil">
-HF, prefix'i yalnızca <code>token_type_ids</code> verilirse iki yönlü yapıyor. Processor bunu cevap (suffix) verildiğinde üretiyor. Sadece görüntü + komutla çalıştırınca <code>token_type_ids</code> yok ve HF'nin maskesi <b>tamamen nedensel</b> oluyor. Makale ve orijinal kod çıkarımda da prefix'i iki yönlü tutuyor. Senin modelin bunu yapıyor ve HF ile karşılaştırırken ona <code>token_type_ids = 0</code> verince logit'ler birebir aynı. Verilmeyince fark büyük (küçük rastgele modelde ~8–10).
+HF, prefix'i yalnızca <code>token_type_ids</code> verilirse iki yönlü yapıyor. Processor bunu cevap (suffix) verildiğinde üretiyor. Sadece görüntü + komutla çalıştırınca <code>token_type_ids</code> yok ve HF'nin maskesi <b>tamamen nedensel</b> oluyor. Makale ve orijinal kod çıkarımda da prefix'i iki yönlü tutuyor. Bu projenin modeli bunu yapıyor ve HF ile karşılaştırırken ona <code>token_type_ids = 0</code> verince logit'ler birebir aynı. Verilmeyince fark büyük (küçük rastgele modelde ~8–10).
 </Callout>
 
 ## Ek: kutular da metin, &lt;loc&gt; token'ları
@@ -126,7 +126,7 @@ PaliGemma tespit (detection) sonucunu da metin olarak yazıyor. Sözlükte 1024 
 ## Kavram soruları
 
 <ConceptQ n={1} q="Köprü neden tek bir linear katman?">
-PaliGemma makalesi (§5.5, Connector design) linear projeksiyon ile MLP bağlayıcıyı karşılaştırıyor ve aralarında anlamlı bir fark bulmuyor. Bu yüzden daha basit olanı seçiyor. Sebep: SigLIP'in temsili zaten dille hizalı (<Link to="/buyuk-resim">2.1</Link>) ve Gemma güçlü. Ağır işi iki taraf yapıyor, köprünün çoğunlukla boyutu eşlemesi yetiyor. Ayrıca PaliGemma eğitimde hiçbir parçayı dondurmuyor: SigLIP de Gemma da birlikte ayarlanıyor, yani esneklik zaten iki taraftan geliyor.
+PaliGemma makalesi (§5.5, Connector design) linear projeksiyon ile MLP bağlayıcıyı karşılaştırıyor ve aralarında anlamlı bir fark bulmuyor. Bu yüzden daha basit olanı seçiyor. Sebep: SigLIP'in temsili zaten dille hizalı (<Link to="/big-picture">2.1</Link>) ve Gemma güçlü. Ağır işi iki taraf yapıyor, köprünün çoğunlukla boyutu eşlemesi yetiyor. Ayrıca PaliGemma eğitimde hiçbir parçayı dondurmuyor: SigLIP de Gemma da birlikte ayarlanıyor, yani esneklik zaten iki taraftan geliyor.
 </ConceptQ>
 <ConceptQ n={2} q="Görsel token'lar embedding tablosundan gelmiyor. <image> token'ının embedding'i nerede ve nasıl değiştiriliyor?">
 <code>&lt;image&gt;</code> (id 257152) sözlükte gerçek bir token ve tabloda bir satırı var. Önce bütün <code>input_ids</code> tablodan geçiyor, &lt;image&gt;'ın satırı da dahil. Sonra <code>_merge_input_ids_with_image_features</code>'da <code>masked_scatter</code> o konumların üzerine projektör çıktısını (ölçeksiz) sırayla yazıyor. &lt;image&gt;'ın tablodaki satırı hiç kullanılmamış oluyor (yukarıdaki birleştirme animasyonu).

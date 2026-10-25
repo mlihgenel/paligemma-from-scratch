@@ -1,0 +1,91 @@
+import { Callout, ConceptQ, Fig, Predict, S, Note } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { KvCacheStepper, RectMask } from "./w/KvCache";
+import { Link } from "react-router-dom";
+
+# KV cache: token token üretim
+
+<p className="lead">Model cevabını token token yazıyor ve her yeni token tam bir forward gerektiriyor. Dikkat edilmezse her adım görüntüyü, komutu ve o ana kadarki cevabı tekrar tekrar baştan hesaplıyor. KV cache tam olarak değişmeyen şeyi saklıyor, böylece her adımda sadece yeni token işleniyor.</p>
+
+## Ne değişiyor, ne değişmiyor?
+
+263. token üretilirken tek bir katmanı düşün. Çıktısını hesaplamak için katmanın ihtiyacı:
+
+- **Yeni token'ın Q'su**: soruyu soran o.
+- **Bütün token'ların K ve V'si**: geçmiştekiler ve yeni olan.
+
+Geçmiş token'ların Q'suna artık gerek yok: onların çıktısı önceki adımlarda üretildi. Geçmiş bir token'ın K ve V'si ise **hiç değişmiyor**. Prefix-LM maskesiyle prefix sadece prefix'e bakıyor, her cevap token'ı da sadece geriye (<Link to="/bridge">3</Link>). Yani sonradan gelen hiçbir şey, hiçbir katmanda, önceki bir token'ın K'sını ya da V'sini değiştiremiyor. Onları yeniden hesaplamak tamamen israf.
+
+Bütün fikir bu: K ve V'yi katman başına sakla, sonra modele her adımda tek token ver. Adı "KV cache", "QKV cache" değil, çünkü Q hiç saklanmıyor.
+
+## Adım adım
+
+<Fig wide caption={<><b>"a sign near the entrance" üretimi.</b> Adım 0 prefill: görüntü ve komut modelden bir kez geçiyor ve her katman onların K ve V'sini cache'e yazıyor. Sonraki her adımda tek bir token giriyor. "Cache'siz"e geçince aynı adımların her şeyi baştan hesapladığını görürsün. Token sayıları 224 px görüntü ve "caption en" komutu için (260 token).</>}>
+<KvCacheStepper />
+</Fig>
+
+İki şeye dikkat et. Birincisi, skor matrisi <S s="T, T" ax="T,T" />'den tek bir satıra, <S s="1, T_all" ax="T,T" />'e iniyor. İkincisi, cache'siz yolda görüntü hiç değişmediği halde SigLIP her adımda yeniden çalışıyor. Cache'le sadece prefill'de, bir kez çalışıyor.
+
+## Cache'in kendisi
+
+<CodeWalk file="gemma.py" symbol="KVCache" notes={[
+  { match: "self.key_cache: list[torch.Tensor] = []", title: "katman başına bir tensör", text: <>K ve V için iki liste, her katmana bir eleman. Her eleman <S s="B, n_kv, T_geçmiş, hd" ax="B,H,T,hd" />. Her katmanın kendi <code>k_proj</code>/<code>v_proj</code>'u var, yani kendi K/V'si.</> },
+  { match: "def get_seq_length", title: "şimdiye kadar kaç token", text: <>Bütün katmanlar aynı uzunlukta, 0. katmana bakmak yeterli. Prefill'den önce 0. Model bir sonraki token'ın yerini bu sayıyla buluyor.</> },
+  { match: "self.key_cache.append(key_states)", title: "ilk çağrı: prefill", text: <>Bu katmanın henüz geçmişi yok: komutun K/V'sini olduğu gibi sakla (<code>T_yeni</code> = komut uzunluğu).</> },
+  { match: "self.key_cache[layer_idx] = torch.cat", title: "sonraki çağrılar: ekle", text: <>Dizi ekseninde (<code>dim=-2</code>) birleştir: <S s="B, n_kv, T, hd" ax="B,H,T,hd" /> + <S s="B, n_kv, 1, hd" ax="B,H,T,hd" /> → <S s="B, n_kv, T+1, hd" ax="B,H,T,hd" />. Birleşmiş tensörler attention'a dönüyor.</> },
+]} />
+
+<CodeWalk file="gemma.py" symbol="GemmaAttention.forward" notes={[
+  { match: "q, k = apply_rotary_pos_emb(q, k, cos, sin)", title: "önce döndür", text: <>K saklanmadan önce kendi konumunda döndürülüyor. Bir token'ın konumu hiç değişmediği için saklanan K'nın bir daha döndürülmesi gerekmiyor (<Link to="/gemma/rope">4.9</Link>).</> },
+  { match: "k, v = kv_cache.update(k, v, self.layer_idx)", title: "tek yeni satır", text: <>Yeni K/V'yi cache'e ekle, bütün token'ların K/V'sini geri al. Yeri RoPE'dan <b>sonra</b>, <code>repeat_kv</code>'den <b>önce</b>: cache tek KV head'ini tutuyor, 8 kopyasını değil. MQA'nın bellek kazancı burada ortaya çıkıyor (<Link to="/gemma/mqa">4.10</Link>).</> },
+  { match: "scores = torch.matmul(q, k.transpose(2, 3)) * self.scaling", title: "tek satır", text: <>Üretimde Q <S s="B, 8, 1, hd" ax="B,H,T,hd" />, K <S s="B, 8, T_top, hd" ax="B,H,T,hd" />, yani skorlar <S s="B, 8, 1, T_top" ax="B,H,T,T" />.</> },
+]} />
+
+## Konumlar ve maskeler
+
+Yeni token'ın girdisi sadece <S s="B, 1, D" ax="B,T,D" />, ama model yine de nerede durduğunu bilmeli. Cache uzunluğundan iki şey çıkıyor.
+
+<CodeWalk file="gemma.py" symbol="GemmaModel.forward" notes={[
+  { match: "past_len = kv_cache.get_seq_length() if kv_cache is not None else 0", title: "önce oku", text: <>Geçmiş uzunluğu katmanlar çalışmadan <b>önce</b> okunmalı: 0. katman ekledikten sonra cache uzuyor.</> },
+  { match: "position_ids = torch.arange(past_len, past_len + T", title: "konumlara devam et", text: <>Yeni token'lar geçmişin kaldığı yerden devam ediyor. Yeniden 0'dan başlamak yeni token'ı dizinin en başındaymış gibi döndürürdü: hata vermez, sadece sessizce yanlış çıktı üretir. KV cache'te en sık yapılan hata bu.</> },
+  { match: "attention_mask = make_causal_mask(T, inputs_embeds.dtype, inputs_embeds.device, past_len)", title: "dikdörtgen maske", text: <><S s="1, 1, T, past_len + T" ax="B,H,T,T" />: satırlar yeni token'lar, sütunlar bütün token'lar.</> },
+]} />
+
+<Fig caption={<><b>make_causal_mask(T, past_len).</b> Yeni token i, past_len + i konumunda: geçmişin hepsini ve yeniler arasında kendisine kadar olanları görüyor. T = 1'de yasaklanacak bir şey kalmıyor.</>}>
+<RectMask />
+</Fig>
+
+<Note label="T = 1'de neden maske yok">Yeni token en sondaki token. Görebileceği her şey geçmişte, gelecek ise cache'te hiç yok. Üretimde nedenselliği cache'in kendisi sağlıyor.</Note>
+
+## PaliGemma'da ve generate'te
+
+<CodeWalk file="paligemma.py" symbol="PaliGemmaForConditionalGeneration.forward" notes={[
+  { match: "if past_len > 0:", title: "iki yol", text: <>Boş cache prefill demek: görüntü + komut, prefix-LM maskesiyle, cache'siz yolun aynısı, tek farkla: her katman K/V'sini yazıyor. Dolu cache bir üretim adımı demek.</> },
+  { match: "inputs_embeds = inputs_embeds * torch.tensor", title: "sadece metin, ölçekli", text: <>Yeni token metin, o yüzden prefill'deki metinle aynı ×√d'yi alıyor. SigLIP ve projektör çalışmıyor.</> },
+  { match: "position_ids = torch.arange(past_len + 1", title: "+1", text: <>PaliGemma konumları 1'den sayıyor: prefill 1 … past_len'i kullandı, yeni token past_len + 1'de.</> },
+  { match: "mask = make_causal_mask(T, inputs_embeds.dtype, inputs_embeds.device, past_len)", title: "prefix_len gerekmiyor", text: <>Yeni token'lar her zaman cevap token'ı. Prefix'in tamamı geçmişte, iki yönlü attention'ı prefill'de zaten oldu.</> },
+]} />
+
+<CodeWalk file="generate.py" symbol="generate" notes={[
+  { match: "kv_cache = KVCache() if use_cache else None", title: "her üretime bir cache", text: <>Yeni, boş bir cache. <code>use_cache=False</code> karşılaştırma için eski yolu tutuyor.</> },
+  { match: "logits = model(input_ids, pixel_values, attention_mask, kv_cache=kv_cache)", title: "prefill", text: <>İlk çağrı iki modda da aynı: görüntü + komutun tamamı. Cache varsa onu dolduruyor.</> },
+  { match: "next_token = logits[:, -1, :].argmax(dim=-1)", title: "greedy", text: <>Sadece son konumun logit'leri önemli.</> },
+  { match: "if done.all() or step == max_new_tokens - 1:", title: "boşa forward yok", text: <>Logit'leri hiç kullanılmayacaksa modeli bir daha çalıştırmadan dur.</> },
+  { match: "next_token[:, None],", title: "tek token giriyor", text: <>Adımın girdisi <S s="B, 1" ax="B,T" />, görüntüsüz. Konum ve maske cache uzunluğundan çıkıyor.</> },
+]} />
+
+<Callout kind="bulgu" title="Gerçek ağırlıklarla aynı token'lar">
+<code>google/paligemma-3b-pt-224</code> ile bf16'da cache'li üretim, cache'siz üretim ve Hugging Face'in <code>generate</code>'i aynı token'ları üretiyor, eos'ta durmadan 64 token için de. <code>checks/check_gemma.py</code> ve <code>checks/check_paligemma.py</code> cache'i adım adım HF'nin <code>DynamicCache</code>'iyle ve cache'siz tam diziyle karşılaştırıyor.
+</Callout>
+
+## Kavram soruları
+
+<ConceptQ n={1} q="Prefill'de neden maske gerekiyor, tek token'lık üretim adımında neden gerekmiyor?">
+Prefill birçok token'ı aynı anda işliyor, o yüzden her birinin göremeyeceği yerleri kapatmak gerekiyor: prefix-LM maskesi görüntü ve komutu iki yönlü, gerisini nedensel tutuyor. Üretim adımında tek bir token var, en sondaki. Öncesindeki her şey serbest, sonrası henüz yok, yani maske satırı tamamen sıfır.
+</ConceptQ>
+<ConceptQ n={2} q="224 px'te PaliGemma için cache ne kadar bellek tutar?">
+Token başına: katman × 2 (K ve V) × KV head × head_dim × bayt = 18 × 2 × 1 × 256 × 2 = bf16'da <b>18 KB</b>. Yaklaşık 270 token'la (260 prefix + kısa bir cevap) <b>~5 MB</b>. 1 yerine 8 KV head olsaydı (düz multi-head attention) 8 kat fazla olurdu. 448 px'te sadece görüntü 1024 token, yani ~4 kat fazla.
+</ConceptQ>
+<ConceptQ n={3} q="bf16'da cache'li çıktı neden cache'siz olanla bit bit aynı değil?">
+Matematik aynı, ama matmul'ların şekilleri farklı (T satır yerine 1 satır), bu yüzden float toplamları farklı sırayla yapılabiliyor. float32'de fark ~1e-6. İki aday neredeyse eşit değilse greedy yine aynı token'ları seçiyor.
+</ConceptQ>

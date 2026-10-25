@@ -1,0 +1,30 @@
+import { Callout } from "../components/ui";
+import { ArchDiagram } from "../interact/ArchDiagram";
+import { PartCards } from "./PartCards";
+import { Link } from "react-router-dom";
+
+<div className="eyebrow" style={{ marginTop: 8 }}>a language model that reads images</div>
+
+# How does PaliGemma work?
+
+<p className="lead">PaliGemma is a model that can look at a photo and write about it. Inside it are two separate models: SigLIP, which understands the <b style={{ color: "var(--part-vision)" }}>image</b>, and Gemma, which writes <b style={{ color: "var(--part-lang)" }}>text</b>. Between them sits a one-layer <b style={{ color: "var(--part-bridge)" }}>bridge</b>. The animation below shows a photo turning into an answer from start to finish.</p>
+
+<div className="wide">
+<ArchDiagram />
+</div>
+
+## One idea: turn the image into words
+
+Language models can only read sequences of tokens. PaliGemma's trick is simple: it turns the image into a sequence of tokens too. SigLIP cuts the photo into 256 pieces and produces one vector per piece. The bridge brings these vectors to the same size as Gemma's word vectors. To Gemma there are now 256 "visual words" followed by a few real words. Gemma reads them and writes the answer word by word, as usual.
+
+The rest of the book opens up every stop on this path. First we walk the whole path with a real photo. Then we go into the three parts in order:
+
+<div className="wide">
+<PartCards />
+</div>
+
+<Callout kind="not" title="Where do the numbers come from?">
+The numbers in this book are not made up. They were produced from small slices of the real PaliGemma weights, real photos, and the code written from scratch in this project (<code>src/</code>). The code blocks are read live from those files. The animation above shows the architecture from the paper. The answer text is real too: with the real weights, this project's code wrote exactly this for this photo with the <code>ocr</code> prompt, token for token the same as Hugging Face.
+</Callout>
+
+<p style={{ marginTop: 32 }}><Link to="/end-to-end"><b>Start: 1. End to end →</b></Link></p>

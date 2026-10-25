@@ -44,17 +44,17 @@ import { Link } from "react-router-dom";
 </Fig>
 
 <Predict q="tie_weights'ten sonra model.parameters() kaç tane [257216, 2048] tensör döndürür? state_dict() kaç anahtar?">
-<code>parameters()</code> <b>bir</b> tane: aynı nesneyi iki kez saymıyor. <code>state_dict()</code> ise <b>iki</b> anahtar döndürüyor (<code>model.embed_tokens.weight</code> ve <code>lm_head.weight</code>), ikisi aynı belleği gösteriyor. Senin oyuncak modelinde ölçülen: tying öncesi 9.70 M, sonrası 9.57 M parametre. Fark 512 × 256 = 131 K, yani tam bir tablo.
+<code>parameters()</code> <b>bir</b> tane: aynı nesneyi iki kez saymıyor. <code>state_dict()</code> ise <b>iki</b> anahtar döndürüyor (<code>model.embed_tokens.weight</code> ve <code>lm_head.weight</code>), ikisi aynı belleği gösteriyor. Oyuncak modelde ölçülen: tying öncesi 9.70 M, sonrası 9.57 M parametre. Fark 512 × 256 = 131 K, yani tam bir tablo.
 </Predict>
 
 ## Gerçek checkpoint'te lm_head yok
 
-<Fig caption={<><b>Ağırlık yüklemeye not.</b> Google'ın checkpoint'i bağlı tensörü bir kez saklıyor. Senin <code>state_dict()</code>'in ise iki anahtar üretiyor.</>}>
+<Fig caption={<><b>Ağırlık yüklemeye not.</b> Google'ın checkpoint'i bağlı tensörü bir kez saklıyor. Modelin <code>state_dict()</code>'i ise iki anahtar üretiyor.</>}>
 <TyingFacts />
 </Fig>
 
 <Callout kind="dikkat" title="Gerçek ağırlıkları yüklerken">
-<code>model.load_state_dict(checkpoint)</code> varsayılan <code>strict=True</code> ile <b>"missing key: language_model.lm_head.weight"</b> hatası verecek. Çözüm basit ve tying sayesinde güvenli: ya o anahtarı ayrıca embedding'den doldur, ya <code>strict=False</code> ile yükleyip eksik listesinin <i>sadece</i> lm_head (ve henüz yazılmadıysa attention) olduğunu kontrol et. Yüklemeden sonra <code>lm_head.weight is embed_tokens.weight</code> hâlâ True olmalı.
+Checkpoint dosyasından doğrudan <code>load_state_dict</code> yapılsa varsayılan <code>strict=True</code> <b>"missing key: language_model.lm_head.weight"</b> hatası verirdi. Projedeki <code>load_hf_weights</code> ağırlıkları HF modelinin <code>state_dict()</code>'inden alıyor (orada bağlı tensör iki anahtarla görünüyor), adları çeviriyor, anahtar kümeleri birebir tutmazsa hata veriyor ve en sonda <code>tie_weights()</code>'i yeniden çağırıyor. Yüklemeden sonra <code>lm_head.weight is embed_tokens.weight</code> True kalıyor.
 </Callout>
 
 ## logits.float(): bellek ve hassasiyet
@@ -68,7 +68,7 @@ import { Link } from "react-router-dom";
 </Fig>
 
 <Impact from="gemma.py: return logits.float()" to="greedy decode: HF ile token token eşleşme">
-Model uçtan uca çalışınca kendi greedy üretimini HF'ninkiyle token token karşılaştıracaksın. İki taraf da float32 logit üzerinde argmax aldığında eşleşme kolaylaşır. bf16 logit'lerle eşit skorlu adaylarda farklı token seçilebilir.
+Projenin greedy üretimi gerçek ağırlıklarla HF'ninkiyle token token aynı. İki taraf da float32 logit üzerinde argmax alıyor. bf16 logit'lerle eşit skorlu adaylarda farklı token seçilebilirdi.
 </Impact>
 
 <ManimVideo scene="WeightTying" caption="Aynı matris: girişte satır seçimi, çıkışta transpozla çarpım." />

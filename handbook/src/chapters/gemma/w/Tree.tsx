@@ -1,43 +1,48 @@
-// Modül ağacı: senin sınıfların, gerçek config ile meta cihazında kurulmuş haliyle
+// Module tree: the project's classes, built from the real config on the meta device
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useData } from "../../../lib/data";
 import { fmtCount } from "../../../lib/tensor";
 import { Loading, S } from "../../../components/ui";
 import type { ModelTree, TreeNode } from "./types";
+import { useLang, useT } from "../../../i18n";
+import type { L } from "../../../i18n";
 
-const WHAT: Record<string, [string, string?]> = {
-  GemmaForCausalLM: ["Dil modeli + lm_head. Gizli durumları sözlük üzerindeki logit'lere çevirir.", "/gemma/tying"],
-  GemmaModel: ["Embedding → ×√d → 18 decoder katmanı → son RMSNorm.", "/gemma/model"],
-  Embedding: ["Token id → tablo satırı (lookup). Hesap değil, indeksleme.", "/gemma/sqrt-d"],
-  ModuleList: ["Alt modülleri kaydeden liste. Kendisi forward yapmaz.", "/gemma/model"],
-  GemmaDecoderLayer: ["Pre-norm katman: x + attn(norm(x)), sonra x + mlp(norm(x)).", "/gemma/katman"],
-  GemmaAttention: ["8 sorgu head'i, 1 KV head'i (MQA). softmax(Q Kᵀ / √256 + maske) V, sonra o_proj. RoPE Q ve K'ya.", "/gemma/attention"],
-  GemmaRotaryEmbedding: ["RoPE için cos/sin tablosu. Parametresi yok: frekanslar sabit bir buffer.", "/gemma/rope"],
-  GemmaMLP: ["GeGLU: down(gelu_tanh(gate(x)) ⊙ up(x)). Token'lar arası karışma yok.", "/gemma/geglu"],
-  GemmaRMSNorm: ["x / rms(x) · (1 + w). Ortalama çıkarılmaz, bias yok, hesap float32'de.", "/gemma/rmsnorm"],
-  Linear: ["y = x Wᵀ (+ b). Son eksen dönüşür, diğer eksenler aynen kalır."],
-  PaliGemmaForConditionalGeneration: ["Üç parçayı birleştiren kök: vision_tower, multi_modal_projector, language_model.", "/kopru"],
-  SiglipVisionModel: ["SigLIP sarmalayıcı: anahtarların vision_model.* olması için.", "/kopru"],
-  SiglipVisionTransformer: ["Embedding → 27 encoder katmanı → post_layernorm."],
-  SiglipVisionEmbeddings: ["Conv2d ile yamalar + öğrenilen konum embedding'i."],
-  Conv2d: ["kernel = stride = 14: üst üste binmeyen 14×14 yamalar, her yamaya aynı linear dönüşüm."],
-  SiglipEncoder: ["27 SiglipEncoderLayer'ı sırayla uygular."],
-  SiglipEncoderLayer: ["Pre-norm: x + attn(LN(x)), x + mlp(LN(x)). Maske yok: her yama her yamayı görür."],
-  SiglipAttention: ["16 head, head_dim 72. softmax(QKᵀ/√72)V."],
-  SiglipMLP: ["fc1 → gelu_tanh → fc2. Klasik (kapısız) MLP."],
-  LayerNorm: ["Ortalama çıkar, varyansa böl, γ ve β ile ölçekle. eps = 1e-6."],
-  PaliGemmaMultiModalProjector: ["Tek Linear: 1152 → 2048. Görsel token'ları dil modelinin boyutuna taşır.", "/kopru"],
+const WHAT: Record<string, [L<string>, string?]> = {
+  GemmaForCausalLM: [{ en: "Language model + lm_head. Turns hidden states into logits over the vocabulary.", tr: "Dil modeli + lm_head. Gizli durumları sözlük üzerindeki logit'lere çevirir." }, "/gemma/tying"],
+  GemmaModel: [{ en: "Embedding → ×√d → 18 decoder layers → final RMSNorm.", tr: "Embedding → ×√d → 18 decoder katmanı → son RMSNorm." }, "/gemma/model"],
+  Embedding: [{ en: "Token id → table row (a lookup). Indexing, not math.", tr: "Token id → tablo satırı (lookup). Hesap değil, indeksleme." }, "/gemma/sqrt-d"],
+  ModuleList: [{ en: "A list that registers its submodules. It has no forward of its own.", tr: "Alt modülleri kaydeden liste. Kendisi forward yapmaz." }, "/gemma/model"],
+  GemmaDecoderLayer: [{ en: "Pre-norm layer: x + attn(norm(x)), then x + mlp(norm(x)).", tr: "Pre-norm katman: x + attn(norm(x)), sonra x + mlp(norm(x))." }, "/gemma/layer"],
+  GemmaAttention: [{ en: "8 query heads, 1 KV head (MQA). softmax(Q Kᵀ / √256 + mask) V, then o_proj. RoPE on Q and K.", tr: "8 sorgu head'i, 1 KV head'i (MQA). softmax(Q Kᵀ / √256 + maske) V, sonra o_proj. RoPE Q ve K'ya." }, "/gemma/attention"],
+  GemmaRotaryEmbedding: [{ en: "The cos/sin table for RoPE. No parameters: the frequencies are a fixed buffer.", tr: "RoPE için cos/sin tablosu. Parametresi yok: frekanslar sabit bir buffer." }, "/gemma/rope"],
+  GemmaMLP: [{ en: "GeGLU: down(gelu_tanh(gate(x)) ⊙ up(x)). Nothing mixes across tokens.", tr: "GeGLU: down(gelu_tanh(gate(x)) ⊙ up(x)). Token'lar arası karışma yok." }, "/gemma/geglu"],
+  GemmaRMSNorm: [{ en: "x / rms(x) · (1 + w). No mean subtraction, no bias, computed in float32.", tr: "x / rms(x) · (1 + w). Ortalama çıkarılmaz, bias yok, hesap float32'de." }, "/gemma/rmsnorm"],
+  Linear: [{ en: "y = x Wᵀ (+ b). The last axis is transformed, the others stay as they are.", tr: "y = x Wᵀ (+ b). Son eksen dönüşür, diğer eksenler aynen kalır." }],
+  PaliGemmaForConditionalGeneration: [{ en: "The root that joins the three parts: vision_tower, multi_modal_projector, language_model.", tr: "Üç parçayı birleştiren kök: vision_tower, multi_modal_projector, language_model." }, "/bridge"],
+  SiglipVisionModel: [{ en: "SigLIP wrapper: so the keys are vision_model.*.", tr: "SigLIP sarmalayıcı: anahtarların vision_model.* olması için." }, "/bridge"],
+  SiglipVisionTransformer: [{ en: "Embedding → 27 encoder layers → post_layernorm.", tr: "Embedding → 27 encoder katmanı → post_layernorm." }],
+  SiglipVisionEmbeddings: [{ en: "Patches via Conv2d + a learned position embedding.", tr: "Conv2d ile yamalar + öğrenilen konum embedding'i." }],
+  Conv2d: [{ en: "kernel = stride = 14: non-overlapping 14×14 patches, the same linear map for each patch.", tr: "kernel = stride = 14: üst üste binmeyen 14×14 yamalar, her yamaya aynı linear dönüşüm." }],
+  SiglipEncoder: [{ en: "Applies the 27 SiglipEncoderLayers in order.", tr: "27 SiglipEncoderLayer'ı sırayla uygular." }],
+  SiglipEncoderLayer: [{ en: "Pre-norm: x + attn(LN(x)), x + mlp(LN(x)). No mask: every patch sees every patch.", tr: "Pre-norm: x + attn(LN(x)), x + mlp(LN(x)). Maske yok: her yama her yamayı görür." }],
+  SiglipAttention: [{ en: "16 heads, head_dim 72. softmax(Q Kᵀ / √72) V with no mask.", tr: "16 head, head_dim 72. Maskesiz softmax(Q Kᵀ / √72) V." }],
+  SiglipMLP: [{ en: "fc1 → gelu_tanh → fc2. A classic (ungated) MLP.", tr: "fc1 → gelu_tanh → fc2. Klasik (kapısız) MLP." }],
+  LayerNorm: [{ en: "Subtract the mean, divide by the std, scale with γ and β. eps = 1e-6.", tr: "Ortalama çıkar, varyansa böl, γ ve β ile ölçekle. eps = 1e-6." }],
+  PaliGemmaMultiModalProjector: [{ en: "A single Linear: 1152 → 2048. Moves the image tokens to the language model's size.", tr: "Tek Linear: 1152 → 2048. Görsel token'ları dil modelinin boyutuna taşır." }, "/bridge"],
 };
 
-const join = (parent: string, k: string) => (parent === "(kök)" ? k : parent + "." + k);
+
+const join = (parent: string, k: string) => (parent === "(root)" ? k : parent + "." + k);
 
 export function ModuleTreeView({ root = "language_model", initialSel, initialOpen }: { root?: string; initialSel?: string; initialOpen?: string[] }) {
+  const lang = useLang();
+  const tr = useT();
   const { data, error } = useData<ModelTree>("model_tree");
   const [sel, setSel] = useState<string>(initialSel ?? root + ".model.layers.0.mlp");
   const [open, setOpen] = useState<Set<string>>(new Set(initialOpen ?? [root, root + ".model", root + ".model.layers", root + ".model.layers.0"]));
   const byName = useMemo(() => new Map((data?.nodes ?? []).map((n) => [n.name, n])), [data]);
-  if (!data) return <Loading what="model ağacı" error={error} />;
+  if (!data) return <Loading what={tr("model tree", "model ağacı")} error={error} />;
   const node = byName.get(sel);
 
   const render = (name: string, d: number): JSX.Element | null => {
@@ -45,7 +50,7 @@ export function ModuleTreeView({ root = "language_model", initialSel, initialOpe
     if (!n) return null;
     const short = name.split(".").pop()!;
     const isLayers = short === "layers";
-    const kids = isLayers ? [n.children[0]] : n.children;   // 18 katman aynı: ilkini göster
+    const kids = isLayers ? [n.children[0]] : n.children;   // all 18 layers are the same: show the first
     const isOpen = open.has(name);
     return (
       <div key={name} style={{ marginLeft: d === 0 ? 0 : 16 }}>
@@ -64,7 +69,7 @@ export function ModuleTreeView({ root = "language_model", initialSel, initialOpe
     );
   };
 
-  const keys = node && node.name !== "(kök)" ? data.keys_ours.filter((k) => k.startsWith(node.name + ".")) : [];
+  const keys = node && node.name !== "(root)" ? data.keys_ours.filter((k) => k.startsWith(node.name + ".")) : [];
   const what = node && WHAT[node.cls];
   return (
     <div className="grid2" style={{ fontFamily: "var(--sans)", alignItems: "start" }}>
@@ -73,11 +78,11 @@ export function ModuleTreeView({ root = "language_model", initialSel, initialOpe
         <div style={{ background: "var(--bg-sunk)", borderRadius: 8, padding: 14, fontSize: 14 }}>
           <div className="mono" style={{ fontSize: 12, wordBreak: "break-all" }} title={node.name}>{node.name}</div>
           <div style={{ fontSize: 18, fontWeight: 700, color: "var(--ax-I)", margin: "4px 0" }}>{node.cls}</div>
-          {what && <p style={{ margin: "4px 0 10px" }}>{what[0]} {what[1] && <Link to={what[1]}>Bölüme git →</Link>}</p>}
+          {what && <p style={{ margin: "4px 0 10px" }}>{what[0][lang]} {what[1] && <Link to={what[1]}>{tr("Go to the chapter →", "Bölüme git →")}</Link>}</p>}
           <table style={{ width: "100%", fontSize: 13 }}>
             <tbody>
-              <tr><td className="muted">giriş</td><td>{node.in ? <S s={node.in.shape.join(",")} ax={axes(node.in.shape)} /> : "–"}</td></tr>
-              <tr><td className="muted">çıkış</td><td>{node.out ? <S s={node.out.shape.join(",")} ax={axes(node.out.shape)} /> : "–"}</td></tr>
+              <tr><td className="muted">{tr("in", "giriş")}</td><td>{node.in ? <S s={node.in.shape.join(",")} ax={axes(node.in.shape)} /> : "–"}</td></tr>
+              <tr><td className="muted">{tr("out", "çıkış")}</td><td>{node.out ? <S s={node.out.shape.join(",")} ax={axes(node.out.shape)} /> : "–"}</td></tr>
               <tr><td className="muted">parametre</td><td className="mono">{node.params.toLocaleString("tr-TR")}</td></tr>
               {Object.entries(node.param_shapes).map(([k, s]) => (
                 <tr key={k}><td className="muted mono">.{k}</td><td><S s={s.join(",")} ax={axes(s)} /></td></tr>
@@ -86,7 +91,7 @@ export function ModuleTreeView({ root = "language_model", initialSel, initialOpe
           </table>
           {keys.length > 0 && keys.length <= 12 && (
             <div style={{ marginTop: 10 }}>
-              <div className="small muted">state_dict anahtarları (HF checkpoint'iyle aynı olmalı):</div>
+              <div className="small muted">{tr("state_dict keys (must match the HF checkpoint):", "state_dict anahtarları (HF checkpoint'iyle aynı olmalı):")}</div>
               {keys.map((k) => (
                 <div key={k} className="mono" style={{ fontSize: 11.5, wordBreak: "break-all" }}>
                   {data.keys_ckpt.includes(k) ? <span style={{ color: "var(--ok)" }}>✓ </span> : <span style={{ color: "var(--warn)" }}>○ </span>}{k}
@@ -100,7 +105,7 @@ export function ModuleTreeView({ root = "language_model", initialSel, initialOpe
   );
 }
 
-/** Şekildeki sayılardan eksen adı tahmini (renk için) */
+/** Guess an axis name from the numbers in a shape (for color) */
 export function axes(s: number[]): string {
   return s.map((n, i) => {
     if (i === 0 && s.length >= 3 && n === 1) return "B";
@@ -113,8 +118,9 @@ export function axes(s: number[]): string {
 }
 
 export function ParamShare() {
+  const tr = useT();
   const { data, error } = useData<ModelTree>("model_tree");
-  if (!data) return <Loading what="parametreler" error={error} />;
+  if (!data) return <Loading what={tr("parameters", "parametreler")} error={error} />;
   const g = (n: string) => data.nodes.find((x) => x.name === n)?.params ?? 0;
   const layers = data.nodes.filter((n) => /^language_model\.model\.layers\.\d+$/.test(n.name));
   const mlp = layers.reduce((s, l) => s + g(l.name + ".mlp"), 0);
@@ -125,12 +131,12 @@ export function ParamShare() {
   const attn = layers.reduce((s, l) => s + g(l.name + ".self_attn"), 0);
   const total = data.params_unique;
   const items = [
-    { label: "SigLIP (görüntü)", value: vision, color: "var(--ax-T)" },
-    { label: "projektör", value: proj, color: "var(--ax-I)" },
+    { label: tr("SigLIP (image)", "SigLIP (görüntü)"), value: vision, color: "var(--ax-T)" },
+    { label: tr("projector", "projektör"), value: proj, color: "var(--ax-I)" },
     { label: "embed_tokens = lm_head", value: emb, color: "var(--ax-V)" },
     { label: "18 × GemmaMLP", value: mlp, color: "var(--ax-D)" },
     { label: "18 × GemmaAttention", value: attn, color: "var(--ax-H)" },
-    { label: "RMSNorm'lar (37)", value: norms, color: "var(--ax-hd)" },
+    { label: tr("RMSNorms (37)", "RMSNorm'lar (37)"), value: norms, color: "var(--ax-hd)" },
   ];
   return (
     <div style={{ fontFamily: "var(--sans)" }}>
@@ -143,7 +149,7 @@ export function ParamShare() {
         ))}
       </div>
       <div className="small muted" style={{ marginTop: 8 }}>
-        Toplam <b className="mono">{fmtCount(total)}</b> tekil parametre (<code>model.parameters()</code> bağlı tensörü bir kez sayar). Modelin adındaki "3B" bu sayıdan geliyor.
+        {tr(<>Total <b className="mono">{fmtCount(total)}</b> unique parameters (<code>model.parameters()</code> counts the tied tensor once). The "3B" in the model's name comes from this number.</>, <>Toplam <b className="mono">{fmtCount(total)}</b> tekil parametre (<code>model.parameters()</code> bağlı tensörü bir kez sayar). Modelin adındaki "3B" bu sayıdan geliyor.</>)}
       </div>
     </div>
   );

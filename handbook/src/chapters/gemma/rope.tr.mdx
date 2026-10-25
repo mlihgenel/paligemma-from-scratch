@@ -9,7 +9,7 @@ import { Link } from "react-router-dom";
 
 ## Fikir: konum bir açı olsun
 
-SigLIP'te konum, tabloda öğrenilen bir vektör olarak yamaların embedding'ine <i>ekleniyordu</i> (<Link to="/goruntu">2.2</Link>). RoPE (rotary position embedding) farklı çalışıyor: Q ve K'nın <code>head_dim</code> boyutlu vektörünü ikişerli çiftlere ayırıyor ve her çifti, kendi 2 boyutlu düzleminde **konum × θ** kadar döndürüyor.
+SigLIP'te konum, tabloda öğrenilen bir vektör olarak yamaların embedding'ine <i>ekleniyordu</i> (<Link to="/patches">2.2</Link>). RoPE (rotary position embedding) farklı çalışıyor: Q ve K'nın <code>head_dim</code> boyutlu vektörünü ikişerli çiftlere ayırıyor ve her çifti, kendi 2 boyutlu düzleminde **konum × θ** kadar döndürüyor.
 
 $$
 \begin{pmatrix} a' \\ b' \end{pmatrix}
@@ -34,13 +34,13 @@ Skor, konumların kendisine değil **farkına** bağlı. "Üç token geride" ifa
 
 ## 128 çift, 128 farklı hız
 
-`head_dim = 256`, yani 128 çift. Çift <span className="mono">i</span>'nin hızı <span className="mono">θᵢ = 10000^(−2i/256)</span>: ilk çiftler hızlı, son çiftler çok yavaş döner. Aşağıdaki frekanslar senin `GemmaRotaryEmbedding` sınıfından geliyor.
+`head_dim = 256`, yani 128 çift. Çift <span className="mono">i</span>'nin hızı <span className="mono">θᵢ = 10000^(−2i/256)</span>: ilk çiftler hızlı, son çiftler çok yavaş döner. Aşağıdaki frekanslar projedeki `GemmaRotaryEmbedding` sınıfından geliyor.
 
 <Fig caption={<><b>Hızlı çiftler yakını, yavaş çiftler uzağı ayırıyor.</b> Çift 0 yaklaşık 6 token'da bir tur atıyor. Çift 127 ise 50 binden fazla token'da. Saat ibresi gibi: saniye ibresi yakın zamanı, saat ibresi uzak zamanı gösteriyor.</>}>
 <RopeFreqs />
 </Fig>
 
-<Fig caption={<><b>Skorun konum farkına bağlılığı.</b> q ve k eşit uzunlukta, aynı yönde (en iyi durum). Hızlı çiftler hemen söner, yavaş çiftler uzak mesafede de bilgi taşır. Altta senin kodunla ölçülen: farkı 5 olan dört farklı konum çifti <b>aynı skoru</b> veriyor.</>}>
+<Fig caption={<><b>Skorun konum farkına bağlılığı.</b> q ve k eşit uzunlukta, aynı yönde (en iyi durum). Hızlı çiftler hemen söner, yavaş çiftler uzak mesafede de bilgi taşır. Altta projenin koduyla ölçülen: farkı 5 olan dört farklı konum çifti <b>aynı skoru</b> veriyor.</>}>
 <RopeScoreCurve />
 </Fig>
 
@@ -73,9 +73,9 @@ Skor, konumların kendisine değil **farkına** bağlı. "Üç token geride" ifa
 
 ## Hangi boyutlar çift oluyor?
 
-Makalede çiftler komşu boyutlar: <span className="mono">(0, 1), (2, 3), …</span>. HF'de ve senin kodunda ise çiftler <b>ilk yarı ile ikinci yarı</b>: <span className="mono">(0, 128), (1, 129), …</span>. İkisi aynı dönüşü anlatıyor, sadece boyutların hangi sırayla dizildiğini değiştiriyor. Ama Gemma'nın ağırlıkları <b>yarı/yarı düzenine</b> göre eğitildi. Yanlış düzeni seçersen hata vermez, sonuç sessizce bozulur.
+Makalede çiftler komşu boyutlar: <span className="mono">(0, 1), (2, 3), …</span>. HF'de ve projenin kodunda ise çiftler <b>ilk yarı ile ikinci yarı</b>: <span className="mono">(0, 128), (1, 129), …</span>. İkisi aynı dönüşü anlatıyor, sadece boyutların hangi sırayla dizildiğini değiştiriyor. Ama Gemma'nın ağırlıkları <b>yarı/yarı düzenine</b> göre eğitildi. Yanlış düzeni seçersen hata vermez, sonuç sessizce bozulur.
 
-<Fig wide caption={<><b>Aynı döndürme, iki düzen.</b> Boyutları (komşu çift → yarı/yarı) yeniden sıralarsan iki yöntem birebir aynı sonucu veriyor. Ama sıralamadan, ham vektöre iki yöntemi uygularsan farklı çiftler döndüğü için sonuçlar farklı çıkıyor. Ölçümler senin <code>apply_rotary_pos_emb</code> fonksiyonunla.</>}>
+<Fig wide caption={<><b>Aynı döndürme, iki düzen.</b> Boyutları (komşu çift → yarı/yarı) yeniden sıralarsan iki yöntem birebir aynı sonucu veriyor. Ama sıralamadan, ham vektöre iki yöntemi uygularsan farklı çiftler döndüğü için sonuçlar farklı çıkıyor. Ölçümler projedeki <code>apply_rotary_pos_emb</code> fonksiyonuyla.</>}>
 <PairLayout />
 </Fig>
 

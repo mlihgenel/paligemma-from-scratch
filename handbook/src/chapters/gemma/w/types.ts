@@ -34,7 +34,7 @@ export interface PgSlices {
   pos_cos: Arr; patch_filters: Arr; proj_stats: any; proj_hist: any;
 }
 
-/** export_attention.py çıktısı: RoPE, repeat_kv ve GemmaAttention deneyleri (senin gemma.py'nle) */
+/** Output of export_attention.py: RoPE, repeat_kv and GemmaAttention experiments (with the project's gemma.py) */
 export interface AttentionToy {
   toy_config: any; seq_len: number;
   rope_real: { head_dim: number; base: number; inv_freq: number[] };

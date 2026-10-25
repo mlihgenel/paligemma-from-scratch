@@ -1,0 +1,48 @@
+import { Callout, ConceptQ, Fig, S, Note } from "../../components/ui";
+import { ManimVideo } from "../../components/misc";
+import { ContrastMatrix, ResolutionCost } from "./Big";
+import { Link } from "react-router-dom";
+
+# The big picture
+
+<p className="lead">PaliGemma has three parts: SigLIP, which turns the image into tokens; a single linear layer that moves them to the language model's size; and Gemma, which writes the answer. Two questions before we write any code: why is the image encoder a <i>contrastively</i> trained model, and why is resolution so expensive?</p>
+
+$$
+\text{image} \xrightarrow{\text{SigLIP}} [256,\,1152] \xrightarrow{\text{Linear}} [256,\,2048] \xrightarrow{+\,\text{prompt}} \text{Gemma} \rightarrow \text{answer}
+$$
+
+## Contrastive learning: softmax vs sigmoid
+
+SigLIP was trained on billions of (image, text) pairs. A batch holds N images and N texts. The model produces a similarity score for every image–text pair: the diagonal holds the matching pairs, everything else the non-matching ones. The goal is to push the diagonal up and the rest down. The difference is in **how** that is measured.
+
+<Fig wide caption={<><b>The similarity matrix.</b> Hover a cell. With softmax (CLIP) a cell's probability depends on its whole row (and, in the symmetric loss, its column): the denominator sees the whole batch. With sigmoid (SigLIP) every cell is a binary classification on its own.</>}>
+<ContrastMatrix />
+</Fig>
+
+<Note label="Source">Zhai et al., <i>Sigmoid Loss for Language Image Pre-Training</i>, ICCV 2023 (<a href="https://arxiv.org/abs/2303.15343">arXiv:2303.15343</a>).</Note>
+
+Because the softmax denominator depends on the whole batch, the full N × N matrix has to be gathered across devices. It also needs max subtraction and log-sum-exp for numerical stability. With sigmoid every cell is independent: memory and communication scale much better as the batch grows.
+
+<Callout kind="neden" title="PaliGemma never uses this loss. So why?">
+There is no SigLIP loss in PaliGemma's training. The image encoder is fine-tuned together with Gemma's answer loss. The job of contrastive pre-training is to give the encoder a representation that is <b>aligned with language</b>: the patch vectors already live in a space you can "talk to" with text. That is why the language model can read this representation through a single linear layer.
+</Callout>
+
+## Resolution and cost
+
+The number of image tokens is (image side / 14)². Attention compares every token with every token, so its cost grows with T².
+
+<Fig wide caption={<><b>224, 448, 896.</b> This is the difference seen in a <a href="https://github.com/mlihgenel/paper-to-practice/tree/main/papers/01-paligemma2/experiment">Turkish street sign experiment</a>: 448 px reads small text, but takes ~3.4× longer per question.</>}>
+<ResolutionCost />
+</Fig>
+
+## Concept questions
+
+<ConceptQ n={1} q="PaliGemma never uses the SigLIP loss during training. Then why pick a contrastively pre-trained image encoder?">
+Because contrastive pre-training aligns the image representation with the space of language: a patch vector carries directions that can be tied to textual concepts like "cat ear". An encoder trained for classification (e.g. ImageNet) only learns to separate 1000 classes. Bridging to a language model needs a much richer, open-vocabulary representation. The PaliGemma paper (§3.1) picks SigLIP So400m for this reason.
+</ConceptQ>
+<ConceptQ n={2} q="Why does every example in a batch depend on all the others under the softmax loss? How does sigmoid remove that?">
+Under softmax a pair's probability is <span className="mono">e^s_ij / Σ_k e^s_ik</span>: the denominator contains every example in the row. When one example's score changes, the probabilities of the whole row change. Under sigmoid each pair is classified on its own with <span className="mono">σ(z_ij(t·s_ij + b))</span> (z = +1 for a matching pair, −1 otherwise). No denominator, no sum. You can see it by hovering the matrix above: 11 cells ↔ 1 cell.
+</ConceptQ>
+<ConceptQ n={3} q="A 224 px image with 14 px patches: how many image tokens? How many at 448 px? Why does that raise Gemma's compute cost by more than 4×?">
+224/14 = 16 → 16² = <b>256</b> tokens. 448/14 = 32 → <b>1024</b> tokens. 4× the tokens. The linear parts of Gemma (MLP, projections) grow ~4×, but the attention score matrix is T × T, so it grows ~16×. The total cost grows by more than 4× and less than 16×. The memory cost of the KV cache grows ~4×.
+</ConceptQ>

@@ -1,0 +1,91 @@
+import { Callout, ConceptQ, Fig, Predict, S, Note } from "../../components/ui";
+import { CodeWalk } from "../../components/CodeWalk";
+import { KvCacheStepper, RectMask } from "./w/KvCache";
+import { Link } from "react-router-dom";
+
+# KV cache: generating token by token
+
+<p className="lead">A model writes its answer one token at a time, and every new token needs a full forward pass. Without care, each pass recomputes the image, the prompt and the whole answer so far, again and again. The KV cache keeps exactly what does not change, so each step only has to process the one new token.</p>
+
+## What changes, and what does not?
+
+Think about one layer when token 263 is being generated. To compute its output the layer needs:
+
+- **Q of the new token**: it is the one asking the question.
+- **K and V of every token**: the past ones and the new one.
+
+The Q's of the past tokens are not needed any more: their outputs were produced in earlier steps. And the K and V of a past token **never change**. With the prefix-LM mask, the prefix only looks at the prefix, and every answer token only looks backwards (<Link to="/bridge">3</Link>). So nothing that comes later can reach back and change an earlier token's K or V, in any layer. Recomputing them is pure waste.
+
+That is the whole idea: store K and V per layer, and from then on feed the model one token per step. It is called a KV cache, not a QKV cache, because Q is never stored.
+
+## Step through it
+
+<Fig wide caption={<><b>Generating "a sign near the entrance".</b> Step 0 is the prefill: the image and prompt go through the model once, and every layer writes their K and V into the cache. After that each step feeds a single token. Switch to "without cache" to see the same steps recomputing everything. The token counts are for a 224 px image and the prompt "caption en" (260 tokens).</>}>
+<KvCacheStepper />
+</Fig>
+
+Two things to notice. First, the score matrix shrinks from <S s="T, T" ax="T,T" /> to a single row <S s="1, T_all" ax="T,T" />. Second, without the cache SigLIP runs again at every step, even though the image never changes. With the cache it runs once, during the prefill.
+
+## The cache itself
+
+<CodeWalk file="gemma.py" symbol="KVCache" notes={[
+  { match: "self.key_cache: list[torch.Tensor] = []", title: "one tensor per layer", text: <>Two lists, K and V, with one entry per layer. Each entry is <S s="B, n_kv, T_past, hd" ax="B,H,T,hd" />. Every layer has its own <code>k_proj</code>/<code>v_proj</code>, so every layer has its own K/V.</> },
+  { match: "def get_seq_length", title: "how many tokens so far", text: <>All layers have the same length, so layer 0 is enough. Before the prefill it is 0. The model uses this number to place the next token.</> },
+  { match: "self.key_cache.append(key_states)", title: "first call: prefill", text: <>There is no past for this layer yet: store the prompt's K/V as they are (<code>T_new</code> = the prompt length).</> },
+  { match: "self.key_cache[layer_idx] = torch.cat", title: "later calls: append", text: <>Concatenate on the sequence axis (<code>dim=-2</code>): <S s="B, n_kv, T, hd" ax="B,H,T,hd" /> + <S s="B, n_kv, 1, hd" ax="B,H,T,hd" /> → <S s="B, n_kv, T+1, hd" ax="B,H,T,hd" />. The joined tensors are returned to attention.</> },
+]} />
+
+<CodeWalk file="gemma.py" symbol="GemmaAttention.forward" notes={[
+  { match: "q, k = apply_rotary_pos_emb(q, k, cos, sin)", title: "rotate first", text: <>K is rotated at its own position before it is stored. A token's position never changes, so its stored K never needs rotating again (<Link to="/gemma/rope">4.9</Link>).</> },
+  { match: "k, v = kv_cache.update(k, v, self.layer_idx)", title: "the one new line", text: <>Add the new K/V to the cache and get back K/V for all tokens. It sits <b>after</b> RoPE and <b>before</b> <code>repeat_kv</code>: the cache holds the single KV head, not 8 copies of it. That is where MQA's memory saving pays off (<Link to="/gemma/mqa">4.10</Link>).</> },
+  { match: "scores = torch.matmul(q, k.transpose(2, 3)) * self.scaling", title: "one row", text: <>During generation Q is <S s="B, 8, 1, hd" ax="B,H,T,hd" /> and K is <S s="B, 8, T_all, hd" ax="B,H,T,hd" />, so the scores are <S s="B, 8, 1, T_all" ax="B,H,T,T" />.</> },
+]} />
+
+## Positions and masks
+
+The new token's input is only <S s="B, 1, D" ax="B,T,D" />, but the model still has to know where it sits. Two things follow from the cache length.
+
+<CodeWalk file="gemma.py" symbol="GemmaModel.forward" notes={[
+  { match: "past_len = kv_cache.get_seq_length() if kv_cache is not None else 0", title: "read it first", text: <>The past length must be read <b>before</b> the layers run: once layer 0 appends, the cache is longer.</> },
+  { match: "position_ids = torch.arange(past_len, past_len + T", title: "continue the positions", text: <>New tokens continue where the past left off. Starting from 0 again would rotate the new token as if it were at the very start of the sequence: no error, just quietly wrong output. This is the most common KV cache bug.</> },
+  { match: "attention_mask = make_causal_mask(T, inputs_embeds.dtype, inputs_embeds.device, past_len)", title: "a rectangular mask", text: <><S s="1, 1, T, past_len + T" ax="B,H,T,T" />: rows are the new tokens, columns all tokens.</> },
+]} />
+
+<Fig caption={<><b>make_causal_mask(T, past_len).</b> New token i sits at position past_len + i: it sees all of the past and the new tokens up to itself. With T = 1 there is nothing left to block.</>}>
+<RectMask />
+</Fig>
+
+<Note label="Why no mask at T = 1">The new token is the last one. Everything it may see is in the past, and the future is not in the cache at all. During generation, the cache itself enforces causality.</Note>
+
+## In PaliGemma and in generate
+
+<CodeWalk file="paligemma.py" symbol="PaliGemmaForConditionalGeneration.forward" notes={[
+  { match: "if past_len > 0:", title: "two paths", text: <>An empty cache means prefill: image + prompt with the prefix-LM mask, exactly as without a cache, except that every layer writes its K/V. A non-empty cache means a generation step.</> },
+  { match: "inputs_embeds = inputs_embeds * torch.tensor", title: "text only, scaled", text: <>The new token is text, so it gets the same ×√d as the text at prefill. SigLIP and the projector do not run.</> },
+  { match: "position_ids = torch.arange(past_len + 1", title: "+1", text: <>PaliGemma counts positions from 1, so prefill used 1 … past_len and the new token sits at past_len + 1.</> },
+  { match: "mask = make_causal_mask(T, inputs_embeds.dtype, inputs_embeds.device, past_len)", title: "no prefix_len needed", text: <>New tokens are always answer tokens. The whole prefix is in the past, and its bidirectional attention already happened at prefill.</> },
+]} />
+
+<CodeWalk file="generate.py" symbol="generate" notes={[
+  { match: "kv_cache = KVCache() if use_cache else None", title: "one cache per generation", text: <>A fresh, empty cache. <code>use_cache=False</code> keeps the old path for comparison.</> },
+  { match: "logits = model(input_ids, pixel_values, attention_mask, kv_cache=kv_cache)", title: "prefill", text: <>The first call is the same in both modes: the whole image + prompt. With a cache it fills it.</> },
+  { match: "next_token = logits[:, -1, :].argmax(dim=-1)", title: "greedy", text: <>Only the last position's logits matter.</> },
+  { match: "if done.all() or step == max_new_tokens - 1:", title: "no wasted forward", text: <>Stop before running the model again if its logits would never be used.</> },
+  { match: "next_token[:, None],", title: "one token in", text: <>The step input is <S s="B, 1" ax="B,T" />, with no image. Position and mask come from the cache length.</> },
+]} />
+
+<Callout kind="bulgu" title="Same tokens, with the real weights">
+With <code>google/paligemma-3b-pt-224</code> in bf16, cached generation, uncached generation and Hugging Face's <code>generate</code> produce the same tokens, also for 64 tokens without stopping at eos. The checks in <code>checks/check_gemma.py</code> and <code>checks/check_paligemma.py</code> compare the cache step by step against HF's <code>DynamicCache</code> and against the uncached full sequence.
+</Callout>
+
+## Concept questions
+
+<ConceptQ n={1} q="Why does the prefill need a mask, while a single generation step does not?">
+The prefill processes many tokens at once, so it has to block what each of them may not see: the prefix-LM mask keeps the image and prompt bidirectional and the rest causal. A generation step has one token, the last one. Everything before it is allowed, and nothing after it exists yet, so the mask row is all zeros.
+</ConceptQ>
+<ConceptQ n={2} q="How much memory does the cache take for PaliGemma at 224 px?">
+Per token: layers × 2 (K and V) × KV heads × head_dim × bytes = 18 × 2 × 1 × 256 × 2 = <b>18 KB</b> in bf16. With about 270 tokens (260 prefix + a short answer) that is <b>~5 MB</b>. With 8 KV heads instead of 1 (plain multi-head attention) it would be 8× more. At 448 px the image alone is 1024 tokens, so ~4× more.
+</ConceptQ>
+<ConceptQ n={3} q="Why is the cached output not bit-identical to the uncached one in bf16?">
+The math is the same, but the matmuls have different shapes (1 row instead of T rows), so the floating-point sums can run in a different order. In float32 the difference is ~1e-6. Greedy decoding still picks the same tokens unless two candidates are almost tied.
+</ConceptQ>
