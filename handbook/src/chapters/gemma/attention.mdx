@@ -64,8 +64,8 @@ Sağda kod, altında bu adıma kadar oluşmuş tensörlerin şekilleri. Şekille
 Nedensel dil modelinde bir token yalnızca <b>kendisini ve öncekileri</b> görebilmeli: yoksa eğitim sırasında cevabı doğrudan görür. Bu, skor tablosunun köşegen üstündeki yarısını yasaklamak demek. Yasak yerler **toplanan maske** ile kapatılıyor: izinli yerler 0, yasak yerler en küçük sayı. Softmax'ta <span className="mono">exp(−çok büyük) = 0</span>.
 
 <CodeWalk file="gemma.py" symbol="make_causal_mask" notes={[
-  { match: "mask = torch.full((T, T), torch.finfo(dtype).min", title: "en küçük sayıyla doldur", text: <>-inf yerine <code>finfo.min</code>. Tamamen yasaklı bir satır -inf ile softmax'ta NaN verir, <code>finfo.min</code> ile eşit ağırlık verir. Nedensel maskede hiçbir satır tamamen yasak olmuyor ama PaliGemma'daki maskelerde ve padding'de olabilir.</> },
-  { match: "mask = torch.triu(mask, diagonal=1)", title: "köşegenin üstü", text: <><code>triu(diagonal=1)</code> köşegenin <b>üstünü</b> tutuyor, geri kalanı 0 yapıyor: <code>j &gt; i</code> yasak, <code>j ≤ i</code> serbest.</> },
+  { match: "mask = torch.full((T, past_len + T), torch.finfo(dtype).min", title: "en küçük sayıyla doldur", text: <>-inf yerine <code>finfo.min</code>. Tamamen yasaklı bir satır -inf ile softmax'ta NaN verir, <code>finfo.min</code> ile eşit ağırlık verir. Nedensel maskede hiçbir satır tamamen yasak olmuyor ama PaliGemma'daki maskelerde ve padding'de olabilir.</> },
+  { match: "mask = torch.triu(mask, diagonal=past_len + 1)", title: "köşegenin üstü", text: <><code>triu(diagonal=1)</code> köşegenin <b>üstünü</b> tutuyor, geri kalanı 0 yapıyor: <code>j &gt; i</code> yasak, <code>j ≤ i</code> serbest. <code>past_len</code> KV cache için (varsayılan 0, o zaman bildiğimiz kare maske).</> },
   { match: "return mask[None, None]", title: "yayılma", text: <><S s="1, 1, T, T" ax="B,H,T,T" />: batch ve head eksenlerine yayılıyor, her batch ve head aynı maskeyi görüyor.</> },
 ]} />
 
@@ -85,16 +85,16 @@ Attention tek başına bir şey yapmıyor: `GemmaDecoderLayer` onu çağırıyor
 
 <CodeWalk file="gemma.py" symbol="GemmaModel.forward" notes={[
   { match: "position_ids: torch.Tensor | None = None", title: "position_ids", text: <><S s="B, T" ax="B,T" />. Her token'ın <b>dizideki</b> konumu. Verilmezse 0 … T−1. KV cache ile üretirken yeni token 260. konumda olacağı için dışarıdan geliyor.</> },
-  { match: "position_ids = torch.arange(T", title: "varsayılan konumlar", text: <><code>arange(T)</code>, her örnek için aynı.</> },
+  { match: "position_ids = torch.arange(past_len, past_len + T", title: "varsayılan konumlar", text: <><code>arange(T)</code>, her örnek için aynı. KV cache varsa geçmişin kaldığı yerden devam ediyor (<code>past_len</code>).</> },
   { match: "attention_mask = make_causal_mask(", title: "varsayılan maske", text: <>Saf Gemma için nedensel. PaliGemma kendi maskesini verecek: görüntü ve komut kısmı çift yönlü (<Link to="/kopru">3</Link>).</> },
   { match: "position_embeddings = self.rotary_emb(hidden_states, position_ids)", title: "cos/sin bir kez", text: <>Tablo bütün katmanlarda aynı. 18 kez hesaplamak yerine bir kez hesaplanıp her katmana geçiriliyor.</> },
-  { match: "hidden_states = decoder_layer(hidden_states, position_embeddings, attention_mask)", title: "döngü", text: <>Artık her katmana üç şey gidiyor. <code>nn.Sequential</code> bunu yapamazdı (<Link to="/gemma/model">4.7</Link>).</> },
+  { match: "hidden_states = decoder_layer(hidden_states, position_embeddings, attention_mask", title: "döngü", text: <>Artık her katmana üç şey gidiyor. <code>nn.Sequential</code> bunu yapamazdı (<Link to="/gemma/model">4.7</Link>).</> },
 ]} />
 
 ## Bilinçli olarak eksik olanlar
 
 <Callout kind="not" title="Henüz olmayanlar">
-<b>KV cache</b> yok: her seferinde bütün dizi baştan işleniyor. <code>layer_idx</code> bu yüzden saklanıyor ama kullanılmıyor. <b>Prefix-LM maskesi</b> yok: şu an her şey nedensel, yani görüntü token'ları bile sadece kendinden öncekileri görüyor. <b>Padding</b> da yok. <code>attention_dropout</code> kullanılmıyor, çünkü çıkarımda zaten 0.
+<b>KV cache</b> burada anlatılmıyor: kodda var (<code>kv_cache</code> parametresi, <code>layer_idx</code> cache'teki satırı seçiyor), ama bu sayfadaki şekiller cache'siz, bütün dizinin tek seferde işlendiği hali gösteriyor. <b>Prefix-LM maskesi</b> yok: şu an her şey nedensel, yani görüntü token'ları bile sadece kendinden öncekileri görüyor. <b>Padding</b> da yok. <code>attention_dropout</code> kullanılmıyor, çünkü çıkarımda zaten 0.
 </Callout>
 
 <Predict q="Nedensel maskede softmax'a giren bir satır tamamen yasaklı olabilir mi?" hint="Token i hangi token'ları görebiliyor?">
