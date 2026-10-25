@@ -315,7 +315,7 @@ function Mask({ x, y, k, nOut }: { x: number; y: number; k: number; nOut: number
           fill={!see ? "var(--bg-sunk)" : kind === "prefix" ? "var(--part-lang)" : "var(--accent)"} fillOpacity={see ? 0.6 : 1} />;
       }))}
       <text x={x + (P * c) / 2} y={y + (P + OUT.length) * c + 13} fontSize={10.5} textAnchor="middle" fill="var(--part-lang)">prefix</text>
-      <text x={x + P * c + (OUT.length * c) / 2} y={y + (P + OUT.length) * c + 13} fontSize={10.5} textAnchor="middle" fill="var(--accent)">cevap</text>
+      <text x={x + P * c + (OUT.length * c) / 2} y={y + (P + OUT.length) * c + 13} fontSize={10.5} textAnchor="middle" fill="var(--accent)">{tr("answer", "cevap")}</text>
     </g>
   );
 }

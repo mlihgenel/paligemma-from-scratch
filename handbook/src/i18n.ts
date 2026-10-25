@@ -24,6 +24,6 @@ export function useDocumentLang() {
   const lang = useLang();
   useEffect(() => {
     document.documentElement.lang = lang;
-    document.title = lang === "tr" ? "PaliGemma El Kitabı" : "PaliGemma Handbook";
+    document.title = lang === "tr" ? "PaliGemma sıfırdan: interaktif el kitabı" : "PaliGemma from scratch: an interactive handbook";
   }, [lang]);
 }

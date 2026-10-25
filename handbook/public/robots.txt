@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://mlihgenel.github.io/paligemma-from-scratch/sitemap.xml
