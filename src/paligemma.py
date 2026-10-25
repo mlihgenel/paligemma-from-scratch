@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 import torch
 from torch import nn
 from siglip import SiglipVisionConfig, SiglipVisionModel
-from gemma import GemmaConfig, GemmaForCausalLM
+from gemma import GemmaConfig, GemmaForCausalLM, KVCache, make_causal_mask
 
 
 # Değerler google/paligemma-3b-pt-224 config.json'dan
@@ -148,13 +148,29 @@ class PaliGemmaForConditionalGeneration(nn.Module):
 
     def forward(
         self,
-        input_ids: torch.Tensor,        # [B, T]
-        pixel_values: torch.Tensor,     # [B, 3, 224, 224]
-        attention_mask: torch.Tensor,   # [B, T]
-        prefix_len: int | None = None,  # ilk kaç token prefix (görüntü + komut). Verilmezse bütün girdi prefix
-    ) -> torch.Tensor:                  # [B, T, vocab_size]
+        input_ids: torch.Tensor,                # [B, T]. Cache'le üretim adımında sadece yeni token: [B, 1]
+        pixel_values: torch.Tensor | None,      # [B, 3, 224, 224]. Üretim adımında None: görüntü zaten cache'te
+        attention_mask: torch.Tensor,           # [B, T]
+        prefix_len: int | None = None,          # ilk kaç token prefix (görüntü + komut). Verilmezse bütün girdi prefix
+        kv_cache: KVCache | None = None,        # boşsa prefill (doldurulur), doluysa üretim adımı
+    ) -> torch.Tensor:                          # [B, T, vocab_size]
         assert torch.all(attention_mask == 1), "padding desteklenmiyor"
         B, T = input_ids.shape
+
+        # Üretim adımı: cache'te görüntü + komut + şimdiye kadarki cevap zaten var. Yeni token'lar sadece metin,
+        # SigLIP ve projektör bir daha çalışmıyor (prefill'de bir kez çalıştı, sonucu K/V olarak cache'te)
+        past_len = kv_cache.get_seq_length() if kv_cache is not None else 0
+        if past_len > 0:
+            inputs_embeds = self.language_model.get_input_embeddings()(input_ids)        # [B, T, 2048]
+            # Prefill'de metne ne yapıldıysa aynısı: ölçek _merge...'deki gibi inputs_embeds'in dtype'ında
+            inputs_embeds = inputs_embeds * torch.tensor(self.config.hidden_size ** 0.5, dtype=inputs_embeds.dtype)
+            # Konumlar prefill'in kaldığı yerden: prefill 1..past_len'i kullandı, yeniler past_len+1'den başlıyor
+            position_ids = torch.arange(past_len + 1, past_len + T + 1, device=input_ids.device).unsqueeze(0).expand(B, -1)
+            # Yeni token'lar suffix (cevap): geçmişin tamamını (prefix + önceki cevap) ve kendilerinden öncekileri görüyor.
+            # T = 1'de [1, 1, 1, past_len + 1] ve tamamen 0. prefix_len gerekmiyor, prefix'in tamamı geçmişte
+            mask = make_causal_mask(T, inputs_embeds.dtype, inputs_embeds.device, past_len)
+            return self.language_model(inputs_embeds, attention_mask=mask, position_ids=position_ids,
+                                       scale_embeddings=False, kv_cache=kv_cache)
         # Üretimde (aşama 6'nın sonu) girdiye cevap token'ları eklenip forward tekrar çağrılacak: prefix o zaman
         # ilk komutun uzunluğu, T değil. İlk çağrıda cevap yok, bütün girdi prefix
         if prefix_len is None:
@@ -170,6 +186,8 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         position_ids = torch.arange(1, T + 1, device=input_ids.device).unsqueeze(0).expand(B, -1)   # [B, T]
         mask = make_prefix_lm_mask(T, prefix_len, inputs_embeds.dtype, inputs_embeds.device)         # [1, 1, T, T]
 
-        # Metin burada zaten ölçeklendi (_merge...), GemmaModel tekrar çarpmasın
-        logits = self.language_model(inputs_embeds, attention_mask=mask, position_ids=position_ids, scale_embeddings=False)
+        # Metin burada zaten ölçeklendi (_merge...), GemmaModel tekrar çarpmasın.
+        # Cache verildiyse bu prefill: her katmanın görüntü + komut K/V'si cache'e yazılıyor
+        logits = self.language_model(inputs_embeds, attention_mask=mask, position_ids=position_ids,
+                                     scale_embeddings=False, kv_cache=kv_cache)
         return logits

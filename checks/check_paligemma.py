@@ -7,7 +7,9 @@ script'i yeniden çalıştırabilirsin:
     load_hf_weights, convert_hf_key -> HF ağırlıkları bizim modele eksiksiz ve doğru adla yükleniyor mu
     PaliGemmaForConditionalGeneration -> HF PaliGemmaForConditionalGeneration (küçük rastgele config, logit'ler)
     (bf16)             -> aynı model bf16'da HF ile birebir (görüntü ölçeksiz birleştirme)
-    generate (src/generate.py) -> HF generate(do_sample=False): token token aynı, eos'ta durma dahil
+    (KV cache)         -> prefill + token token cache'li logit'ler = cache'siz tam dizi (prefix + suffix)
+    generate (src/generate.py) -> HF generate(do_sample=False): token token aynı, eos'ta durma dahil;
+                          cache'li ve cache'siz (use_cache=False) üretim de birbiriyle aynı
 
 Çalıştır (proje kökünden):
     .venv/bin/python checks/check_paligemma.py
@@ -212,6 +214,32 @@ def check_model():
     return bool(ok)
 
 
+def check_kv_cache():
+    _, ours = build_loaded_pair()
+    input_ids, pixel_values, attention_mask = make_inputs()
+    T = input_ids.shape[1]
+    prefix_len = T - 3            # görüntü + komutun bir kısmı prefix, son 3 token "cevap" gibi tek tek veriliyor
+
+    ok = True
+    with torch.no_grad():
+        # Referans: cache'siz, tam dizi tek seferde (aşama 6'daki gibi)
+        full = ours(input_ids, pixel_values, attention_mask, prefix_len=prefix_len)          # [B, T, vocab]
+
+        # Prefill: sadece prefix, görüntüyle. Sonra suffix token'ları birer birer, görüntüsüz
+        cache = paligemma.KVCache()
+        steps = [ours(input_ids[:, :prefix_len], pixel_values, attention_mask[:, :prefix_len], kv_cache=cache)]
+        for t in range(prefix_len, T):
+            steps.append(ours(input_ids[:, t:t + 1], None, attention_mask[:, t:t + 1], kv_cache=cache))
+        ok &= compare("PaliGemma cache'li (prefill + 3 adım) = cache'siz tam dizi", torch.cat(steps, dim=1), full)
+
+        n_layers = TEXT["num_hidden_layers"]
+        ok_len = len(cache.key_cache) == n_layers and cache.get_seq_length() == T
+        print(f"[{'OK ' if ok_len else 'HATA'}] cache: {len(cache.key_cache)} katman (beklenen {n_layers}), "
+              f"uzunluk {cache.get_seq_length()} (beklenen {T})")
+        ok &= ok_len
+    return bool(ok)
+
+
 def check_bf16_exact():
     # Gerçek model bf16'da çalışıyor. hidden_size=48: sqrt(48) 2'nin kuvveti değil. sqrt(64) = 8 olsaydı
     # "görüntüyü sqrt(d)'ye böl, sonra hepsini çarp" yöntemi de yuvarlama yapmaz ve bu test o hatayı yakalamazdı
@@ -243,23 +271,25 @@ def check_generate():
                           eos_token_id=eos, pad_token_id=TEXT["pad_token_id"])
         return out[:, T:]                                    # HF komutu da geri döndürüyor
 
-    # 1) eos'suz: hepsi max_new_tokens kadar üretiliyor
-    ours_tokens = generate.generate(ours, input_ids, pixel_values, attention_mask, steps, eos_token_id=-1)
-    hf_tokens = hf_generate(eos=None)
-    ok_plain = torch.equal(ours_tokens, hf_tokens)
-    print(f"[{'OK ' if ok_plain else 'HATA'}] greedy üretim, eos yok: {ours_tokens[0].tolist()}")
-    if not ok_plain:
-        print(f"   HF: {hf_tokens[0].tolist()}")
+    def ours_generate(eos, use_cache):
+        return generate.generate(ours, input_ids, pixel_values, attention_mask, steps,
+                                 eos_token_id=eos, use_cache=use_cache)
 
+    ok = True
+    # 1) eos'suz: hepsi max_new_tokens kadar üretiliyor
     # 2) eos: ilk örneğin 3. token'ını eos ilan et. O örnek orada durmalı, sonrası pad, diğer örnek devam etmeli
-    eos = int(ours_tokens[0, 2])
-    ours_eos = generate.generate(ours, input_ids, pixel_values, attention_mask, steps, eos_token_id=eos)
-    hf_eos = hf_generate(eos=eos)
-    ok_eos = torch.equal(ours_eos, hf_eos)
-    print(f"[{'OK ' if ok_eos else 'HATA'}] greedy üretim, eos={eos}: ilk örnek {ours_eos[0].tolist()}")
-    if not ok_eos:
-        print(f"   HF: {hf_eos[0].tolist()}")
-    return bool(ok_plain and ok_eos)
+    eos = int(ours_generate(-1, use_cache=True)[0, 2])
+    for label, our_eos, hf_eos in [("eos yok", -1, None), (f"eos={eos}", eos, eos)]:
+        hf_tokens = hf_generate(eos=hf_eos)
+        for use_cache in (True, False):
+            ours_tokens = ours_generate(our_eos, use_cache)
+            same = torch.equal(ours_tokens, hf_tokens)
+            print(f"[{'OK ' if same else 'HATA'}] greedy üretim ({'cache' if use_cache else 'cache yok'}), "
+                  f"{label}: ilk örnek {ours_tokens[0].tolist()}")
+            if not same:
+                print(f"   HF: {hf_tokens[0].tolist()}")
+            ok &= same
+    return bool(ok)
 
 
 def main():
@@ -269,6 +299,7 @@ def main():
         ("load_hf_weights", check_loader),
         ("PaliGemmaForConditionalGeneration", check_model),
         ("PaliGemmaForConditionalGeneration", check_bf16_exact),
+        ("KVCache", check_kv_cache),
         ("generate", check_generate),
     ]
 
